@@ -62,6 +62,20 @@ def _json_safe(obj: Any) -> Any:
 # --------------------------------------------------------------------------- #
 # Instrument mapping (NIFTY index / futures / equity)
 # --------------------------------------------------------------------------- #
+_MONTHS = {m: i for i, m in enumerate(
+    ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"], start=1)}
+_FUT_RE = __import__("re").compile(r"(\d{2})([A-Z]{3})(\d{2})FUT$")
+
+
+def _parse_fut_expiry(symbol: str) -> date | None:
+    """Parse an F&O expiry from an OpenAlgo future symbol, e.g. NIFTY25AUG26FUT."""
+    m = _FUT_RE.search((symbol or "").upper())
+    if not m:
+        return None
+    dd, mon, yy = m.groups()
+    return date(2000 + int(yy), _MONTHS[mon], int(dd))
+
+
 def _instrument_for(symbol: str, exchange: str) -> Any:
     from qbacktest.core.types import Exchange, Instrument, InstrumentType
 
@@ -72,7 +86,8 @@ def _instrument_for(symbol: str, exchange: str) -> Any:
     if ex in ("NFO", "BFO"):
         qex = Exchange.BFO if ex == "BFO" else Exchange.NFO
         # NIFTY futures lot size (current); refine per-expiry via lot_sizes later.
-        return Instrument(symbol=symbol, exchange=qex, instrument_type=InstrumentType.FUT, lot_size=75)
+        return Instrument(symbol=symbol, exchange=qex, instrument_type=InstrumentType.FUT,
+                          lot_size=75, expiry=_parse_fut_expiry(symbol))
     qex = getattr(Exchange, ex, Exchange.NSE)
     return Instrument(symbol=symbol, exchange=qex, instrument_type=InstrumentType.EQ, lot_size=1)
 
@@ -169,12 +184,18 @@ def _make_strategy(symbol: str, window: int) -> Any:
             if len(self._closes) <= window:
                 return
             sma = sum(self._closes[-window:]) / window
-            inst = ctx.equity_(symbol)
+            # Trade the instrument we are actually fed (index/future/equity),
+            # not a synthesized equity — otherwise orders reference an
+            # instrument with no price stream and never fill. Quantity must be a
+            # lot-size multiple for derivatives (the engine rejects otherwise),
+            # so trade exactly one lot.
+            inst = bar.instrument
+            qty = max(getattr(inst, "lot_size", 1) or 1, 1)
             if bar.close > sma and not self._long:
-                ctx.buy(inst, quantity=1)
+                ctx.buy(inst, quantity=qty)
                 self._long = True
             elif bar.close < sma and self._long:
-                ctx.sell(inst, quantity=1)
+                ctx.sell(inst, quantity=qty)
                 self._long = False
 
     return DemoMomentum()
