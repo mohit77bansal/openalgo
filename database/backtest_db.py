@@ -29,6 +29,7 @@ class BacktestRun(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
     strategy = Column(String(100), nullable=False)
+    strategy_description = Column(Text)
     symbol = Column(String(50), nullable=False)
     exchange = Column(String(20), nullable=False)
     interval = Column(String(10), nullable=False, default="D")
@@ -59,6 +60,7 @@ def save_backtest_run(result: dict) -> int | None:
         metrics = result.get("metrics", {})
         run = BacktestRun(
             strategy=result.get("strategy", "unknown"),
+            strategy_description=result.get("strategy_description"),
             symbol=result.get("symbol", ""),
             exchange=result.get("exchange", ""),
             interval=result.get("interval", "D"),
@@ -102,6 +104,7 @@ def list_backtest_runs(limit: int = 50) -> list[dict]:
                 "id": r.id,
                 "created_at": r.created_at.isoformat() if r.created_at else None,
                 "strategy": r.strategy,
+                "strategy_description": r.strategy_description,
                 "symbol": r.symbol,
                 "exchange": r.exchange,
                 "interval": r.interval,

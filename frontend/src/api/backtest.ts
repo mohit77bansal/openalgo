@@ -19,6 +19,20 @@ export interface BacktestRunRequest {
   end: string
   capital: number
   cost: string
+  strategy?: string
+}
+
+export interface StrategyOption {
+  key: string
+  name: string
+  description: string
+}
+
+export async function getBacktestStrategies(): Promise<StrategyOption[]> {
+  const { data } = await webClient.get<{ status: string; strategies: StrategyOption[] }>(
+    '/backtest/api/strategies',
+  )
+  return data.strategies
 }
 
 /** Headline numbers for one run. Null where the engine could not compute honestly. */
@@ -39,6 +53,7 @@ export interface BacktestRunResponse {
   status: 'success' | 'error'
   message?: string
   strategy: string
+  strategy_description?: string
   symbol: string
   exchange: string
   interval: string
@@ -64,6 +79,7 @@ export interface BacktestRunSummary {
   id: number
   created_at: string
   strategy: string
+  strategy_description: string | null
   symbol: string
   exchange: string
   interval: string

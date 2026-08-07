@@ -165,30 +165,38 @@ def _build_db_source(symbol: str, exchange: str, interval: str, start: str | Non
 
 
 # --------------------------------------------------------------------------- #
-# Strategy (simple SMA momentum — works on index/futures/equity series alike)
+# Strategy registry — each strategy has a name, description, and factory.
 # --------------------------------------------------------------------------- #
-def _make_strategy(symbol: str, window: int) -> Any:
+
+STRATEGY_REGISTRY: dict[str, dict[str, Any]] = {}
+
+
+def _register(key: str, name: str, description: str, factory):
+    STRATEGY_REGISTRY[key] = {"name": name, "description": description, "factory": factory}
+
+
+def _init_strategies():
     from qbacktest.engine.strategy import Strategy
 
-    class DemoMomentum(Strategy):
-        name = "DemoMomentum"
+    class SMAMomentum(Strategy):
+        """Buy when close > SMA(window), sell when below."""
+        name = "SMA Momentum"
+
+        def __init__(self, symbol: str, window: int = 10):
+            self._symbol = symbol
+            self._window = window
 
         def on_start(self, ctx):
             self._closes: list[float] = []
             self._long = False
 
         def on_bar(self, ctx, bar):
-            if bar.instrument.symbol != symbol:
+            if bar.instrument.symbol != self._symbol:
                 return
             self._closes.append(bar.close)
-            if len(self._closes) <= window:
+            if len(self._closes) <= self._window:
                 return
-            sma = sum(self._closes[-window:]) / window
-            # Trade the instrument we are actually fed (index/future/equity),
-            # not a synthesized equity — otherwise orders reference an
-            # instrument with no price stream and never fill. Quantity must be a
-            # lot-size multiple for derivatives (the engine rejects otherwise),
-            # so trade exactly one lot.
+            sma = sum(self._closes[-self._window:]) / self._window
             inst = bar.instrument
             qty = max(getattr(inst, "lot_size", 1) or 1, 1)
             if bar.close > sma and not self._long:
@@ -198,18 +206,122 @@ def _make_strategy(symbol: str, window: int) -> Any:
                 ctx.sell(inst, quantity=qty)
                 self._long = False
 
-    return DemoMomentum()
+    class RSIMeanReversion(Strategy):
+        """Buy when RSI(14) < 30 (oversold), sell when RSI > 70 (overbought)."""
+        name = "RSI Mean Reversion"
+
+        def __init__(self, symbol: str, period: int = 14, oversold: float = 30, overbought: float = 70):
+            self._symbol = symbol
+            self._period = period
+            self._oversold = oversold
+            self._overbought = overbought
+
+        def on_start(self, ctx):
+            self._closes: list[float] = []
+            self._long = False
+
+        def _rsi(self) -> float | None:
+            if len(self._closes) < self._period + 1:
+                return None
+            gains, losses = [], []
+            for i in range(-self._period, 0):
+                delta = self._closes[i] - self._closes[i - 1]
+                gains.append(max(delta, 0))
+                losses.append(max(-delta, 0))
+            avg_gain = sum(gains) / self._period
+            avg_loss = sum(losses) / self._period
+            if avg_loss == 0:
+                return 100.0
+            rs = avg_gain / avg_loss
+            return 100 - (100 / (1 + rs))
+
+        def on_bar(self, ctx, bar):
+            if bar.instrument.symbol != self._symbol:
+                return
+            self._closes.append(bar.close)
+            rsi = self._rsi()
+            if rsi is None:
+                return
+            inst = bar.instrument
+            qty = max(getattr(inst, "lot_size", 1) or 1, 1)
+            if rsi < self._oversold and not self._long:
+                ctx.buy(inst, quantity=qty)
+                self._long = True
+            elif rsi > self._overbought and self._long:
+                ctx.sell(inst, quantity=qty)
+                self._long = False
+
+    class DualSMACrossover(Strategy):
+        """Buy when fast SMA crosses above slow SMA, sell on cross below."""
+        name = "Dual SMA Crossover"
+
+        def __init__(self, symbol: str, fast: int = 5, slow: int = 20):
+            self._symbol = symbol
+            self._fast = fast
+            self._slow = slow
+
+        def on_start(self, ctx):
+            self._closes: list[float] = []
+            self._long = False
+
+        def on_bar(self, ctx, bar):
+            if bar.instrument.symbol != self._symbol:
+                return
+            self._closes.append(bar.close)
+            if len(self._closes) < self._slow:
+                return
+            fast_sma = sum(self._closes[-self._fast:]) / self._fast
+            slow_sma = sum(self._closes[-self._slow:]) / self._slow
+            inst = bar.instrument
+            qty = max(getattr(inst, "lot_size", 1) or 1, 1)
+            if fast_sma > slow_sma and not self._long:
+                ctx.buy(inst, quantity=qty)
+                self._long = True
+            elif fast_sma < slow_sma and self._long:
+                ctx.sell(inst, quantity=qty)
+                self._long = False
+
+    _register("sma_momentum", "SMA Momentum",
+              "Long when close > SMA(10), flat when below. Trend-following. Needs ~40% win rate at 1.5:1 R:R.",
+              lambda sym, **kw: SMAMomentum(sym, window=kw.get("window", 10)))
+
+    _register("rsi_mean_reversion", "RSI Mean Reversion",
+              "Buy when RSI(14) < 30 (oversold), sell when RSI > 70 (overbought). Counter-trend. Best in ranging markets.",
+              lambda sym, **kw: RSIMeanReversion(sym, period=kw.get("period", 14)))
+
+    _register("dual_sma_crossover", "Dual SMA Crossover",
+              "Buy when SMA(5) crosses above SMA(20), sell on cross below. Classic golden/death cross signal.",
+              lambda sym, **kw: DualSMACrossover(sym, fast=kw.get("fast", 5), slow=kw.get("slow", 20)))
+
+
+_init_strategies()
+
+
+def list_strategies() -> list[dict[str, str]]:
+    """Return all registered strategies with their descriptions."""
+    return [
+        {"key": k, "name": v["name"], "description": v["description"]}
+        for k, v in STRATEGY_REGISTRY.items()
+    ]
+
+
+def _make_strategy(symbol: str, strategy_key: str = "sma_momentum", **kwargs) -> Any:
+    entry = STRATEGY_REGISTRY.get(strategy_key)
+    if not entry:
+        entry = STRATEGY_REGISTRY["sma_momentum"]
+    return entry["factory"](symbol, **kwargs)
 
 
 # --------------------------------------------------------------------------- #
 # Engine invocation (the one seam to offload to a worker in production)
 # --------------------------------------------------------------------------- #
-def _run_engine(source_obj: Any, symbol: str, capital: float, cost: str, window: int) -> Any:
+def _run_engine(source_obj: Any, symbol: str, capital: float, cost: str,
+                strategy_key: str = "sma_momentum", **strategy_kwargs) -> Any:
     from qbacktest.costs.costs import DEFAULT_COST_MODELS
     from qbacktest.engine.engine import BacktestEngine
 
     engine = BacktestEngine(
-        strategy=_make_strategy(symbol, window),
+        strategy=_make_strategy(symbol, strategy_key, **strategy_kwargs),
         data=source_obj,
         starting_capital=capital,
         cost_model=DEFAULT_COST_MODELS[cost],
@@ -226,8 +338,9 @@ def run_backtest(
     end: str | None = None,
     capital: float = DEFAULT_CAPITAL,
     cost: str = "zerodha",
-    window: int = 8,
+    strategy_key: str = "sma_momentum",
     n_bars: int = 120,
+    **strategy_kwargs,
 ) -> dict[str, Any]:
     """Run a backtest and return a JSON-safe result (see module docstring)."""
     if cost not in DEMO_COST_MODELS:
@@ -239,13 +352,17 @@ def run_backtest(
     if not math.isfinite(capital) or capital <= 0:
         capital = DEFAULT_CAPITAL
 
+    strat_entry = STRATEGY_REGISTRY.get(strategy_key, STRATEGY_REGISTRY.get("sma_momentum", {}))
+    strat_name = strat_entry.get("name", strategy_key)
+    strat_desc = strat_entry.get("description", "")
+
     try:
         if source == "db":
             source_obj, n_bars = _build_db_source(symbol, exchange, interval, start, end)
         else:
             source = "demo"
             source_obj = _build_synthetic_source(symbol, exchange, n_bars)
-        result = _run_engine(source_obj, symbol, capital, cost, window)
+        result = _run_engine(source_obj, symbol, capital, cost, strategy_key, **strategy_kwargs)
     except ValueError as e:
         return {"status": "error", "message": str(e)}
     except Exception:
@@ -258,7 +375,8 @@ def run_backtest(
 
     out = {
         "status": "success",
-        "strategy": "DemoMomentum",
+        "strategy": strat_name,
+        "strategy_description": strat_desc,
         "symbol": symbol,
         "exchange": exchange,
         "interval": interval,

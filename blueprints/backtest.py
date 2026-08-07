@@ -13,7 +13,7 @@
 
 from flask import Blueprint, jsonify, render_template_string, request
 
-from services.backtest_service import DEFAULT_CAPITAL, run_backtest, run_demo_backtest
+from services.backtest_service import DEFAULT_CAPITAL, list_strategies, run_backtest, run_demo_backtest
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -114,9 +114,16 @@ def backtest_run_api():
         end=params.get("end") or None,
         capital=params.get("capital", DEFAULT_CAPITAL),
         cost=params.get("cost", "zerodha"),
+        strategy_key=params.get("strategy", "sma_momentum"),
     )
     status = 200 if result.get("status") == "success" else 500
     return jsonify(result), status
+
+
+@backtest_bp.route("/api/strategies", methods=["GET"])
+def backtest_strategies():
+    """List available backtest strategies with descriptions."""
+    return jsonify({"status": "success", "strategies": list_strategies()})
 
 
 @backtest_bp.route("/api/history", methods=["GET"])

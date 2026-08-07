@@ -8,8 +8,8 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
-import { type BacktestSource, runBacktest, getBacktestHistory, getBacktestDetail } from '@/api/backtest'
-import type { BacktestRunSummary } from '@/api/backtest'
+import { type BacktestSource, runBacktest, getBacktestHistory, getBacktestDetail, getBacktestStrategies } from '@/api/backtest'
+import type { BacktestRunSummary, StrategyOption } from '@/api/backtest'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -56,6 +56,15 @@ export default function Backtest() {
   const [end, setEnd] = useState(todayISO(0))
   const [capital, setCapital] = useState(1000000)
   const [cost, setCost] = useState('zerodha')
+  const [strategyKey, setStrategyKey] = useState('sma_momentum')
+
+  const { data: strategies = [] } = useQuery({
+    queryKey: ['backtest', 'strategies'],
+    queryFn: getBacktestStrategies,
+    staleTime: 10 * 60_000,
+  })
+
+  const selectedStrategy = strategies.find((s: StrategyOption) => s.key === strategyKey)
 
   const mutation = useMutation({
     mutationFn: runBacktest,
@@ -84,6 +93,7 @@ export default function Backtest() {
       end,
       capital: Number(capital),
       cost,
+      strategy: strategyKey,
     })
 
   return (
@@ -173,6 +183,25 @@ export default function Backtest() {
             </div>
 
             <div className="space-y-1">
+              <Label className="text-xs">Strategy</Label>
+              <Select value={strategyKey} onValueChange={setStrategyKey}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {strategies.map((s: StrategyOption) => (
+                    <SelectItem key={s.key} value={s.key}>
+                      {s.name}
+                    </SelectItem>
+                  ))}
+                  {strategies.length === 0 && (
+                    <SelectItem value="sma_momentum">SMA Momentum</SelectItem>
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1">
               <Label className="text-xs">Cost model</Label>
               <Select value={cost} onValueChange={setCost}>
                 <SelectTrigger>
@@ -188,6 +217,13 @@ export default function Backtest() {
               </Select>
             </div>
           </div>
+
+          {selectedStrategy && (
+            <p className="text-xs text-muted-foreground border-t pt-3">
+              <span className="font-medium text-foreground">{selectedStrategy.name}:</span>{' '}
+              {selectedStrategy.description}
+            </p>
+          )}
 
           <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3">
             <p className="text-xs text-muted-foreground">
@@ -259,6 +295,7 @@ function BacktestHistory() {
             <thead>
               <tr className="border-b text-left text-xs text-muted-foreground">
                 <th className="pb-2 pr-4">Time</th>
+                <th className="pb-2 pr-4">Strategy</th>
                 <th className="pb-2 pr-4">Symbol</th>
                 <th className="pb-2 pr-4">Source</th>
                 <th className="pb-2 pr-4">Bars</th>
@@ -278,6 +315,9 @@ function BacktestHistory() {
                 >
                   <td className="py-2 pr-4 text-xs text-muted-foreground whitespace-nowrap">
                     {loadingId === r.id ? '...' : r.created_at ? new Date(r.created_at).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '-'}
+                  </td>
+                  <td className="py-2 pr-4" title={r.strategy_description || ''}>
+                    <span className="font-medium">{r.strategy}</span>
                   </td>
                   <td className="py-2 pr-4 font-medium">{r.symbol}/{r.exchange}</td>
                   <td className="py-2 pr-4">{r.source === 'db' ? 'AngelOne (Live)' : r.source === 'demo' ? 'Synthetic' : r.source}</td>
