@@ -143,3 +143,35 @@ def backtest_detail(run_id: int):
     if not run:
         return jsonify({"status": "error", "message": "run not found"}), 404
     return jsonify({"status": "success", **run})
+
+
+@backtest_bp.route("/api/run/<int:run_id>/montecarlo", methods=["GET"])
+def backtest_monte_carlo(run_id: int):
+    """Run Monte Carlo simulation on a completed backtest's trade PnLs."""
+    from database.backtest_db import get_backtest_run
+    from services.monte_carlo_service import run_monte_carlo
+    import json
+
+    run = get_backtest_run(run_id)
+    if not run:
+        return jsonify({"status": "error", "message": "run not found"}), 404
+
+    trades = json.loads(run.get("equity_json", "[]")) if isinstance(run.get("equity_json"), str) else []
+    # Extract per-trade PnLs from the trades list
+    trade_pnls = []
+    for t in (run.get("trades") or []):
+        if isinstance(t, dict):
+            pnl = t.get("pnl") or t.get("realized_pnl") or 0
+            if isinstance(pnl, (int, float)):
+                trade_pnls.append(float(pnl))
+
+    if not trade_pnls:
+        return jsonify({"status": "error", "message": "no trade PnLs available for simulation"}), 400
+
+    n_sims = request.args.get("n", 1000, type=int)
+    result = run_monte_carlo(
+        trade_pnls=trade_pnls,
+        starting_capital=run.get("capital", 1000000),
+        n_simulations=min(n_sims, 10000),
+    )
+    return jsonify(result)

@@ -702,6 +702,219 @@ def _init_strategies():
 
             self._prev_close = bar.close
 
+    # ------------------------------------------------------------------
+    # 8. MABB — Moving Average Bollinger Bands (15yr Bank Nifty backtest)
+    # Source: financewithsai.com/s06-banknifty-mabb-intraday-trading-strategy
+    # ------------------------------------------------------------------
+    class MABB(Strategy):
+        name = "MABB (Research-Backed)"
+
+        def __init__(self, sym: str, bb_period: int = 20, sma_period: int = 200,
+                     atr_entry: int = 30, atr_sl: int = 500, lookback: int = 24):
+            self._sym = sym
+            self._bb_period = bb_period
+            self._sma_period = sma_period
+            self._atr_entry = atr_entry
+            self._atr_sl = atr_sl
+            self._lookback = lookback
+
+        def on_start(self, ctx):
+            self._closes: list[float] = []
+            self._highs: list[float] = []
+            self._lows: list[float] = []
+            self._long = False
+            self._short = False
+            self._sl = 0.0
+
+        def _hlc3(self, i: int) -> float:
+            return (self._highs[i] + self._lows[i] + self._closes[i]) / 3
+
+        def on_bar(self, ctx, bar):
+            if bar.instrument.symbol != self._sym:
+                return
+            self._closes.append(bar.close)
+            self._highs.append(bar.high)
+            self._lows.append(bar.low)
+            n = len(self._closes)
+            if n < max(self._sma_period, self._bb_period, self._atr_entry + 1, self._lookback + 1):
+                return
+
+            inst = bar.instrument
+            qty = _lot(inst)
+            atr_e = _atr(self._highs, self._lows, self._closes, self._atr_entry) or 0
+            atr_s = _atr(self._highs, self._lows, self._closes, min(self._atr_sl, n - 1)) or atr_e
+
+            bb_window = self._closes[-self._bb_period:]
+            bb_sma = sum(bb_window) / self._bb_period
+            bb_std = (sum((x - bb_sma) ** 2 for x in bb_window) / self._bb_period) ** 0.5
+            upper_bb = bb_sma + 2 * bb_std
+            lower_bb = bb_sma - 2 * bb_std
+
+            hlc3_vals = [self._hlc3(i) for i in range(-self._sma_period, 0)]
+            sma200 = sum(hlc3_vals) / self._sma_period
+
+            highest_close = max(self._closes[-self._lookback - 1:-1])
+            lowest_close = min(self._closes[-self._lookback - 1:-1])
+
+            if self._long:
+                if bar.close <= self._sl:
+                    ctx.sell(inst, quantity=qty)
+                    self._long = False
+                return
+            if self._short:
+                if bar.close >= self._sl:
+                    ctx.buy(inst, quantity=qty)
+                    self._short = False
+                return
+
+            if bar.close > sma200 and bar.close > upper_bb:
+                trigger = highest_close + 2 * atr_e
+                if bar.close >= trigger:
+                    ctx.buy(inst, quantity=qty)
+                    self._long = True
+                    self._sl = bar.close - 2.5 * atr_s
+            elif bar.close < sma200 and bar.close < lower_bb:
+                trigger = lowest_close - 2 * atr_e
+                if bar.close <= trigger:
+                    ctx.sell(inst, quantity=qty)
+                    self._short = True
+                    self._sl = bar.close + 2.5 * atr_s
+
+    # ------------------------------------------------------------------
+    # 9. VWAP Reversion (institutional mean-reversion)
+    # ------------------------------------------------------------------
+    class VWAPReversion(Strategy):
+        name = "VWAP Reversion"
+
+        def __init__(self, sym: str, dev_pct: float = 0.008, sl_mult: float = 1.5, tp_mult: float = 2.0):
+            self._sym = sym
+            self._dev_pct = dev_pct
+            self._sl_mult = sl_mult
+            self._tp_mult = tp_mult
+
+        def on_start(self, ctx):
+            self._cum_vol = 0.0
+            self._cum_pv = 0.0
+            self._long = False
+            self._short = False
+            self._sl = 0.0
+            self._tp = 0.0
+            self._highs: list[float] = []
+            self._lows: list[float] = []
+            self._closes: list[float] = []
+
+        def on_bar(self, ctx, bar):
+            if bar.instrument.symbol != self._sym:
+                return
+            self._highs.append(bar.high)
+            self._lows.append(bar.low)
+            self._closes.append(bar.close)
+            typical = (bar.high + bar.low + bar.close) / 3
+            vol = bar.volume if bar.volume > 0 else 1
+            self._cum_pv += typical * vol
+            self._cum_vol += vol
+            vwap = self._cum_pv / self._cum_vol if self._cum_vol > 0 else bar.close
+            dev = (bar.close - vwap) / vwap if vwap else 0
+            atr = _atr(self._highs, self._lows, self._closes, 14)
+            inst = bar.instrument
+            qty = _lot(inst)
+
+            if self._long:
+                if bar.close <= self._sl or bar.close >= self._tp:
+                    ctx.sell(inst, quantity=qty)
+                    self._long = False
+                return
+            if self._short:
+                if bar.close >= self._sl or bar.close <= self._tp:
+                    ctx.buy(inst, quantity=qty)
+                    self._short = False
+                return
+
+            if not atr or atr == 0:
+                return
+            risk = atr * self._sl_mult
+            if dev < -self._dev_pct:
+                ctx.buy(inst, quantity=qty)
+                self._long = True
+                self._sl = bar.close - risk
+                self._tp = vwap
+            elif dev > self._dev_pct:
+                ctx.sell(inst, quantity=qty)
+                self._short = True
+                self._sl = bar.close + risk
+                self._tp = vwap
+
+    # ------------------------------------------------------------------
+    # 10. Heikin-Ashi Trend Follower (smoothed candle momentum)
+    # ------------------------------------------------------------------
+    class HeikinAshiTrend(Strategy):
+        name = "Heikin-Ashi Trend"
+
+        def __init__(self, sym: str, confirm_bars: int = 3, atr_period: int = 14, sl_mult: float = 2.0):
+            self._sym = sym
+            self._confirm = confirm_bars
+            self._atr_period = atr_period
+            self._sl_mult = sl_mult
+
+        def on_start(self, ctx):
+            self._ha_close: list[float] = []
+            self._ha_open: list[float] = []
+            self._highs: list[float] = []
+            self._lows: list[float] = []
+            self._closes: list[float] = []
+            self._long = False
+            self._short = False
+            self._sl = 0.0
+            self._bull_count = 0
+            self._bear_count = 0
+
+        def on_bar(self, ctx, bar):
+            if bar.instrument.symbol != self._sym:
+                return
+            self._highs.append(bar.high)
+            self._lows.append(bar.low)
+            self._closes.append(bar.close)
+
+            ha_c = (bar.open + bar.high + bar.low + bar.close) / 4
+            ha_o = (self._ha_open[-1] + self._ha_close[-1]) / 2 if self._ha_open else (bar.open + bar.close) / 2
+            self._ha_close.append(ha_c)
+            self._ha_open.append(ha_o)
+
+            is_bull = ha_c > ha_o
+            is_bear = ha_c < ha_o
+            self._bull_count = self._bull_count + 1 if is_bull else 0
+            self._bear_count = self._bear_count + 1 if is_bear else 0
+
+            atr = _atr(self._highs, self._lows, self._closes, self._atr_period)
+            inst = bar.instrument
+            qty = _lot(inst)
+
+            if self._long:
+                if self._bear_count >= 2 or (atr and bar.close < self._sl):
+                    ctx.sell(inst, quantity=qty)
+                    self._long = False
+                elif atr:
+                    self._sl = max(self._sl, bar.close - self._sl_mult * atr)
+                return
+            if self._short:
+                if self._bull_count >= 2 or (atr and bar.close > self._sl):
+                    ctx.buy(inst, quantity=qty)
+                    self._short = False
+                elif atr:
+                    self._sl = min(self._sl, bar.close + self._sl_mult * atr)
+                return
+
+            if not atr:
+                return
+            if self._bull_count >= self._confirm:
+                ctx.buy(inst, quantity=qty)
+                self._long = True
+                self._sl = bar.close - self._sl_mult * atr
+            elif self._bear_count >= self._confirm:
+                ctx.sell(inst, quantity=qty)
+                self._short = True
+                self._sl = bar.close + self._sl_mult * atr
+
     # --- Register all ---
     _register("orb_15min", "ORB 15-Min (Research-Backed)",
               "8-year backtested on NIFTY (2017-2026): +91.6% return, 48.7% win rate, Sharpe 1.16, max DD -11.2%, 2,122 trades. Uses first 2×15min candles as the opening range. Buys breakout above OR high, shorts below OR low. SL at opposite OR level, TP at 2× OR range. Short trades = 75% of profits. Friday strongest, Tuesday weakest. Source: intradaylab.com backtest.",
@@ -730,6 +943,18 @@ def _init_strategies():
     _register("mean_reversion_extreme", "Mean Reversion Extreme",
               "Multi-signal confirmation: enters ONLY when price hits 2σ Bollinger Band + RSI(7) < 25 or > 75 + above-average volume. Triple filter = high conviction. Exits at SMA (the mean). 1.5×ATR hard stop. Low frequency, ~65% win rate when all 3 conditions align.",
               lambda sym, **kw: MeanReversionExtreme(sym))
+
+    _register("mabb", "MABB (Research-Backed)",
+              "Moving Average Bollinger Bands — 15-year backtested on Bank Nifty. Entry: close > SMA(200) + above upper BB(20,2) + highest close(24) + 2×ATR(30). SL: 2.5×ATR(500). Filters for strong momentum breakouts only. Source: financewithsai.com.",
+              lambda sym, **kw: MABB(sym))
+
+    _register("vwap_reversion", "VWAP Reversion",
+              "Institutional mean-reversion: buys when price drops >0.8% below VWAP (institutional support), sells when >0.8% above (institutional resistance). TP at VWAP (the mean), SL at 1.5×ATR. VWAP is the volume-weighted average price — the level institutions defend.",
+              lambda sym, **kw: VWAPReversion(sym, dev_pct=kw.get("dev_pct", 0.008)))
+
+    _register("heikin_ashi_trend", "Heikin-Ashi Trend",
+              "Smoothed candle momentum: enters after 3 consecutive Heikin-Ashi bullish/bearish candles (filters noise). Trailing stop at 2×ATR. Exits on 2 consecutive opposite HA candles. Trend-following with noise reduction.",
+              lambda sym, **kw: HeikinAshiTrend(sym, confirm_bars=kw.get("confirm_bars", 3)))
 
     # ------------------------------------------------------------------
     # 8. Regime-Adaptive Momentum/Reversion Switcher
