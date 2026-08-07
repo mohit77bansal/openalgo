@@ -82,6 +82,7 @@ from blueprints.oitracker import oitracker_bp  # Import the OI tracker blueprint
 from blueprints.orders import orders_bp
 from blueprints.paper_trading import paper_trading_bp  # Paper trading automation + risk
 from blueprints.platforms import platforms_bp
+from blueprints.strategies import strategies_bp  # Automated strategy management
 from blueprints.playground import playground_bp  # Import the API playground blueprint
 from blueprints.pnltracker import pnltracker_bp  # Import the pnl tracker blueprint
 from blueprints.postback import postback_bp  # Import broker postback (order updates) blueprint
@@ -93,6 +94,7 @@ from blueprints.react_app import (  # Import React frontend blueprint
     serve_react_app,
 )
 from blueprints.sandbox import sandbox_bp  # Import the sandbox blueprint
+from blueprints.scanner import scanner_bp  # Import the NIFTY F&O arb scanner blueprint
 from blueprints.scalping import scalping_bp  # Import the Scalping terminal blueprint
 from blueprints.search import search_bp
 from blueprints.security import security_bp  # Import the security blueprint
@@ -343,6 +345,11 @@ def create_app():
     app.register_blueprint(postback_bp)  # Register broker postback (order-update webhook) blueprint
     app.register_blueprint(backtest_bp)  # Register aladin backtesting module
     app.register_blueprint(paper_trading_bp)  # Register paper trading + risk blueprint
+    app.register_blueprint(scanner_bp)  # Register NIFTY F&O arb scanner blueprint
+    app.register_blueprint(strategies_bp)  # Register automated strategy management
+
+    # Exempt scanner endpoints from CSRF (called programmatically with API key)
+    csrf.exempt(scanner_bp)
 
     # Remote MCP (HTTP + OAuth) — opt-in via MCP_HTTP_ENABLED. Off by default.
     # Pre-flight refusal: must NEVER coexist with FLASK_DEBUG=True (debug-mode

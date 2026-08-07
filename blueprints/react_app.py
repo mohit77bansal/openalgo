@@ -316,9 +316,21 @@ def react_paper():
     return serve_react_app()
 
 
+# Automated Strategies — ORB debit spread, scanner dashboard
+@react_bp.route("/auto-strategies")
+def react_auto_strategies():
+    return serve_react_app()
+
+
 # Arbitrage - Futures calendar-spread scanner
 @react_bp.route("/arbitrage")
 def react_arbitrage():
+    return serve_react_app()
+
+
+# Scanner - NIFTY F&O arb scanner dashboard
+@react_bp.route("/scanner")
+def react_scanner():
     return serve_react_app()
 
 

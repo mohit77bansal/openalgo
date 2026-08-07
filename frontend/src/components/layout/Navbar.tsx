@@ -218,7 +218,7 @@ export function Navbar() {
               (portrait/small-laptop) widths */}
           {user?.broker && (
             <Badge variant="outline" className="hidden lg:flex text-xs">
-              {user.broker}
+              {user.broker === 'angel' ? 'AngelOne' : user.broker}
             </Badge>
           )}
 

@@ -337,7 +337,7 @@ function SidebarContent({
                 size="icon"
                 className="h-8 w-8"
                 onClick={toggleMode}
-                disabled={appMode !== 'live'}
+                disabled={false}
                 aria-label={mode === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
               >
                 {mode === 'light' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
@@ -416,7 +416,7 @@ function SidebarContent({
           <DropdownMenuContent side={collapsed ? 'right' : 'top'} align="start" className="w-48">
             {user?.broker && (
               <DropdownMenuItem disabled className="text-xs text-muted-foreground">
-                Broker: {user.broker}
+                Broker: {user.broker === 'angel' ? 'AngelOne' : user.broker}
               </DropdownMenuItem>
             )}
             <DropdownMenuItem

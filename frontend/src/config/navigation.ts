@@ -124,6 +124,7 @@ export const sidebarGroups: NavGroup[] = [
     items: [
       { href: '/strategy', label: 'Strategy', icon: Code2 },
       { href: '/backtest', label: 'Backtest', icon: LineChart },
+      { href: '/auto-strategies', label: 'Auto Strategies', icon: FlaskConical },
       { href: '/flow', label: 'Flow Editor', icon: Workflow },
       { href: '/python', label: 'Python Strategies', icon: Code2 },
       { href: '/scalping', label: 'Scalping', icon: Zap },
