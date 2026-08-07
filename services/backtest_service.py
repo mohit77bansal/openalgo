@@ -1196,6 +1196,131 @@ def _init_strategies():
                 if bar.close > upper: ctx.buy(inst, quantity=qty); self._long = True
                 elif bar.close < lower: ctx.sell(inst, quantity=qty); self._short = True
 
+    # ------------------------------------------------------------------
+    # 18. RSI + Bollinger Band Squeeze (double confirmation)
+    # ------------------------------------------------------------------
+    class RSIBBSqueeze(Strategy):
+        name = "RSI + BB Squeeze"
+
+        def __init__(self, sym: str, bb_period: int = 20, rsi_period: int = 14,
+                     squeeze_bw: float = 0.03, rsi_bull: float = 55, rsi_bear: float = 45):
+            self._sym = sym; self._bb_period = bb_period; self._rsi_period = rsi_period
+            self._squeeze_bw = squeeze_bw; self._rsi_bull = rsi_bull; self._rsi_bear = rsi_bear
+
+        def on_start(self, ctx):
+            self._closes: list[float] = []; self._highs: list[float] = []; self._lows: list[float] = []
+            self._long = False; self._short = False; self._was_squeezed = False; self._sl = 0.0
+
+        def _rsi(self, period: int) -> float | None:
+            c = self._closes
+            if len(c) < period + 1: return None
+            gains = [max(c[i] - c[i-1], 0) for i in range(-period, 0)]
+            losses = [max(c[i-1] - c[i], 0) for i in range(-period, 0)]
+            ag = sum(gains) / period; al = sum(losses) / period
+            return 100 - (100 / (1 + ag / al)) if al else 100.0
+
+        def on_bar(self, ctx, bar):
+            if bar.instrument.symbol != self._sym: return
+            self._closes.append(bar.close); self._highs.append(bar.high); self._lows.append(bar.low)
+            if len(self._closes) < max(self._bb_period, self._rsi_period + 1): return
+            w = self._closes[-self._bb_period:]
+            sma = sum(w) / self._bb_period
+            std = (sum((x - sma)**2 for x in w) / self._bb_period)**0.5
+            bw = (2 * 2 * std) / sma if sma else 0
+            is_squeeze = bw < self._squeeze_bw
+            rsi = self._rsi(self._rsi_period)
+            atr = _atr(self._highs, self._lows, self._closes, 14) or 0
+            inst = bar.instrument; qty = _lot(inst)
+            if self._long:
+                if bar.close < self._sl or (rsi and rsi < 40): ctx.sell(inst, quantity=qty); self._long = False
+                elif atr: self._sl = max(self._sl, bar.close - 2 * atr)
+                self._was_squeezed = is_squeeze; return
+            if self._short:
+                if bar.close > self._sl or (rsi and rsi > 60): ctx.buy(inst, quantity=qty); self._short = False
+                elif atr: self._sl = min(self._sl, bar.close + 2 * atr)
+                self._was_squeezed = is_squeeze; return
+            if self._was_squeezed and not is_squeeze and rsi and atr:
+                if rsi > self._rsi_bull: ctx.buy(inst, quantity=qty); self._long = True; self._sl = bar.close - 2 * atr
+                elif rsi < self._rsi_bear: ctx.sell(inst, quantity=qty); self._short = True; self._sl = bar.close + 2 * atr
+            self._was_squeezed = is_squeeze
+
+    # ------------------------------------------------------------------
+    # 19. Pivot Point Breakout
+    # ------------------------------------------------------------------
+    class PivotPointBreakout(Strategy):
+        name = "Pivot Point Breakout"
+
+        def __init__(self, sym: str, sl_mult: float = 1.0, tp_mult: float = 2.0):
+            self._sym = sym; self._sl_mult = sl_mult; self._tp_mult = tp_mult
+
+        def on_start(self, ctx):
+            self._prev_h: float = 0; self._prev_l: float = 99999; self._prev_c: float = 0
+            self._highs: list[float] = []; self._lows: list[float] = []; self._closes: list[float] = []
+            self._long = False; self._short = False; self._sl = 0.0; self._tp = 0.0; self._bar_count = 0
+
+        def on_bar(self, ctx, bar):
+            if bar.instrument.symbol != self._sym: return
+            self._highs.append(bar.high); self._lows.append(bar.low); self._closes.append(bar.close)
+            self._bar_count += 1
+            if self._bar_count <= 1:
+                self._prev_h = bar.high; self._prev_l = bar.low; self._prev_c = bar.close; return
+            pivot = (self._prev_h + self._prev_l + self._prev_c) / 3
+            r1 = 2 * pivot - self._prev_l; s1 = 2 * pivot - self._prev_h
+            r2 = pivot + (self._prev_h - self._prev_l); s2 = pivot - (self._prev_h - self._prev_l)
+            inst = bar.instrument; qty = _lot(inst)
+            if self._long:
+                if bar.close <= self._sl or bar.close >= self._tp: ctx.sell(inst, quantity=qty); self._long = False
+            elif self._short:
+                if bar.close >= self._sl or bar.close <= self._tp: ctx.buy(inst, quantity=qty); self._short = False
+            elif bar.close > r1:
+                risk = bar.close - pivot
+                ctx.buy(inst, quantity=qty); self._long = True
+                self._sl = bar.close - risk * self._sl_mult; self._tp = bar.close + risk * self._tp_mult
+            elif bar.close < s1:
+                risk = pivot - bar.close
+                ctx.sell(inst, quantity=qty); self._short = True
+                self._sl = bar.close + risk * self._sl_mult; self._tp = bar.close - risk * self._tp_mult
+            self._prev_h = bar.high; self._prev_l = bar.low; self._prev_c = bar.close
+
+    # ------------------------------------------------------------------
+    # 20. Momentum + Volume Confirmation
+    # ------------------------------------------------------------------
+    class MomentumVolume(Strategy):
+        name = "Momentum + Volume"
+
+        def __init__(self, sym: str, mom_period: int = 10, vol_mult: float = 1.5, atr_period: int = 14):
+            self._sym = sym; self._mom_period = mom_period
+            self._vol_mult = vol_mult; self._atr_period = atr_period
+
+        def on_start(self, ctx):
+            self._closes: list[float] = []; self._volumes: list[float] = []
+            self._highs: list[float] = []; self._lows: list[float] = []
+            self._long = False; self._short = False; self._sl = 0.0
+
+        def on_bar(self, ctx, bar):
+            if bar.instrument.symbol != self._sym: return
+            self._closes.append(bar.close); self._volumes.append(bar.volume)
+            self._highs.append(bar.high); self._lows.append(bar.low)
+            if len(self._closes) < self._mom_period + 1: return
+            mom = bar.close - self._closes[-self._mom_period - 1]
+            avg_vol = sum(self._volumes[-20:]) / min(len(self._volumes), 20) if self._volumes else 1
+            high_vol = bar.volume > self._vol_mult * avg_vol if avg_vol > 0 else False
+            atr = _atr(self._highs, self._lows, self._closes, self._atr_period)
+            inst = bar.instrument; qty = _lot(inst)
+            if self._long:
+                if atr and bar.close < self._sl: ctx.sell(inst, quantity=qty); self._long = False
+                elif atr: self._sl = max(self._sl, bar.close - 2 * atr)
+                return
+            if self._short:
+                if atr and bar.close > self._sl: ctx.buy(inst, quantity=qty); self._short = False
+                elif atr: self._sl = min(self._sl, bar.close + 2 * atr)
+                return
+            if not atr: return
+            if mom > 0 and high_vol:
+                ctx.buy(inst, quantity=qty); self._long = True; self._sl = bar.close - 2 * atr
+            elif mom < 0 and high_vol:
+                ctx.sell(inst, quantity=qty); self._short = True; self._sl = bar.close + 2 * atr
+
     # --- Register all ---
     _register("orb_15min", "ORB 15-Min (Research-Backed)",
               "8-year backtested on NIFTY (2017-2026): +91.6% return, 48.7% win rate, Sharpe 1.16, max DD -11.2%, 2,122 trades. Uses first 2x15min candles as the opening range. Buys breakout above OR high, shorts below OR low. SL at opposite OR level, TP at 2x OR range. Short trades = 75% of profits. Friday strongest, Tuesday weakest.",
@@ -1281,6 +1406,21 @@ def _init_strategies():
               "Popular in Asian futures: compute range = max(HH-LC, HC-LL) over 4 bars. Buy above open+K1*range, sell below open-K2*range. Reversal system — always in the market. Widely used on Nikkei, Hang Seng, SGX.",
               lambda sym, **kw: DualThrust(sym, k1=kw.get("k1", 0.5), k2=kw.get("k2", 0.5)),
               source="futureshive.com | Dual Thrust system, adapted from Asian futures markets")
+
+    _register("rsi_bb_squeeze", "RSI + BB Squeeze",
+              "Double confirmation: enters on Bollinger Band squeeze release (bandwidth < 3% expanding) + RSI direction (>55 long, <45 short). Trailing ATR stop. Combines volatility breakout with momentum filter.",
+              lambda sym, **kw: RSIBBSqueeze(sym),
+              source="John Bollinger + Larry Connors combined approach | Volatility + momentum confirmation")
+
+    _register("pivot_breakout", "Pivot Point Breakout",
+              "Classical pivot points: buy above R1 (first resistance), sell below S1 (first support). SL at pivot, TP at 2x risk = 2:1 R:R. Pivot = (H+L+C)/3. Widely used by floor traders and institutions.",
+              lambda sym, **kw: PivotPointBreakout(sym),
+              source="Floor trader pivot system | Used by CME floor traders since 1970s")
+
+    _register("momentum_volume", "Momentum + Volume Confirmation",
+              "Enters when 10-bar momentum is positive/negative AND volume is 1.5x above 20-bar average (confirms institutional participation). Trailing 2xATR stop. Volume spike = smart money is moving.",
+              lambda sym, **kw: MomentumVolume(sym),
+              source="Mark Minervini, 'Trade Like a Stock Market Wizard' (2013) | Volume-confirmed momentum")
 
     # ------------------------------------------------------------------
     # 8. Regime-Adaptive Momentum/Reversion Switcher
