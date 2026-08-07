@@ -126,3 +126,37 @@ def execute_strategy():
 
     result = execute_spread_paper(sig, api_key=api_key, lots=lots)
     return jsonify(result), 200 if result.get("status") == "success" else 500
+
+
+@strategies_bp.route("/api/multileg/list", methods=["GET"])
+def list_multileg():
+    """List available multi-leg option strategies."""
+    from services.multileg_strategy_service import list_multileg_strategies
+    return jsonify({"status": "success", "strategies": list_multileg_strategies()})
+
+
+@strategies_bp.route("/api/multileg/execute", methods=["POST"])
+def execute_multileg():
+    """Execute a multi-leg option strategy via paper trading.
+
+    Body: { api_key, strategy (short_straddle|iron_condor|iron_butterfly),
+            underlying (NIFTY|BANKNIFTY), expiry (07AUG26), atm_strike (24500),
+            lots (1), sell_distance (200), wing_width (100) }
+    """
+    params = request.get_json(silent=True) or {}
+    api_key = params.get("api_key")
+    if not api_key:
+        return jsonify({"status": "error", "message": "api_key required"}), 400
+
+    from services.multileg_strategy_service import execute_multileg_paper
+    result = execute_multileg_paper(
+        strategy_key=params.get("strategy", "iron_condor"),
+        underlying=params.get("underlying", "NIFTY"),
+        expiry=params.get("expiry", "07AUG26"),
+        atm_strike=int(params.get("atm_strike", 24500)),
+        lots=int(params.get("lots", 1)),
+        api_key=api_key,
+        sell_distance=int(params.get("sell_distance", 200)),
+        wing_width=int(params.get("wing_width", 100)),
+    )
+    return jsonify(result)

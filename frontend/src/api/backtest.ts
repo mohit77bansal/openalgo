@@ -52,6 +52,7 @@ export interface BacktestTrade {
 export interface BacktestRunResponse {
   status: 'success' | 'error'
   message?: string
+  run_id?: number
   strategy: string
   strategy_description?: string
   strategy_source?: string
@@ -133,4 +134,53 @@ export async function getBacktestDetail(runId: number): Promise<BacktestRunRespo
     `/backtest/api/run/${runId}`,
   )
   return data as BacktestRunResponse
+}
+
+// ---------------------------------------------------------------------------
+// Monte Carlo simulation
+// ---------------------------------------------------------------------------
+
+export interface MonteCarloTradeStats {
+  total_pnl: number
+  avg_pnl_per_trade: number
+  win_rate: number
+  avg_win: number
+  avg_loss: number
+  profit_factor: number | null
+}
+
+export interface MonteCarloSimResults {
+  final_equity_median: number
+  final_equity_p5: number
+  final_equity_p95: number
+  final_equity_worst: number
+  final_equity_best: number
+  max_drawdown_median: number
+  max_drawdown_p95: number
+  probability_of_ruin: number
+  probability_of_profit: number
+}
+
+export interface MonteCarloPercentileCurves {
+  p5: number[]
+  p25: number[]
+  p50: number[]
+  p75: number[]
+  p95: number[]
+}
+
+export interface MonteCarloResult {
+  status: string
+  n_trades: number
+  n_simulations: number
+  trade_stats: MonteCarloTradeStats
+  simulation_results: MonteCarloSimResults
+  percentile_curves: MonteCarloPercentileCurves
+}
+
+export async function getMonteCarloSimulation(runId: number): Promise<MonteCarloResult> {
+  const { data } = await webClient.get<MonteCarloResult>(
+    `/backtest/api/run/${runId}/montecarlo`,
+  )
+  return data
 }

@@ -6,7 +6,9 @@
  * before it navigates here. No result means the user deep-linked or reloaded,
  * so we send them back to the form rather than render an empty report.
  */
+import { useState } from 'react'
 import { Navigate, useNavigate } from 'react-router'
+import { getMonteCarloSimulation, type MonteCarloResult } from '@/api/backtest'
 import { OHLCChart } from '@/components/backtest/OHLCChart'
 import { PortfolioLineChart } from '@/components/portfolio/PortfolioLineChart'
 import { Button } from '@/components/ui/button'
@@ -64,6 +66,45 @@ export default function BacktestResults() {
   // The chart indexes on a bare YYYY-MM-DD; slice keeps it working whether the
   // engine sends a plain date or a full session timestamp.
   const equity = result.equity.map((p) => ({ date: p.date.slice(0, 10), value: p.value }))
+
+  // Monte Carlo simulation state
+  const [mcData, setMcData] = useState<MonteCarloResult | null>(null)
+  const [mcLoading, setMcLoading] = useState(false)
+  const [mcError, setMcError] = useState<string | null>(null)
+
+  const handleRunMonteCarlo = async () => {
+    if (!result.run_id) return
+    setMcLoading(true)
+    setMcError(null)
+    try {
+      const data = await getMonteCarloSimulation(result.run_id)
+      if (data.status === 'error') {
+        setMcError('Monte Carlo simulation failed')
+      } else {
+        setMcData(data)
+      }
+    } catch (err) {
+      setMcError(err instanceof Error ? err.message : 'Failed to run Monte Carlo simulation')
+    } finally {
+      setMcLoading(false)
+    }
+  }
+
+  /** Convert a trade-step index to a sequential date for the chart x-axis. */
+  const tradeStepDate = (i: number): string => {
+    const d = new Date(2000, 0, 1 + i)
+    return d.toISOString().slice(0, 10)
+  }
+
+  const mcSeries = mcData
+    ? [
+        { name: 'P5 (worst likely)', color: '#dbeafe', data: mcData.percentile_curves.p5.map((v: number, i: number) => ({ date: tradeStepDate(i), value: v })) },
+        { name: 'P25', color: '#93c5fd', data: mcData.percentile_curves.p25.map((v: number, i: number) => ({ date: tradeStepDate(i), value: v })) },
+        { name: 'Median (P50)', color: '#1d4ed8', data: mcData.percentile_curves.p50.map((v: number, i: number) => ({ date: tradeStepDate(i), value: v })) },
+        { name: 'P75', color: '#60a5fa', data: mcData.percentile_curves.p75.map((v: number, i: number) => ({ date: tradeStepDate(i), value: v })) },
+        { name: 'P95 (best likely)', color: '#bfdbfe', data: mcData.percentile_curves.p95.map((v: number, i: number) => ({ date: tradeStepDate(i), value: v })) },
+      ]
+    : []
 
   return (
     <div className="container mx-auto space-y-4 p-4">
@@ -179,6 +220,99 @@ export default function BacktestResults() {
           />
         </CardContent>
       </Card>
+
+      {/* Monte Carlo Simulation */}
+      {result.run_id != null && !mcData && (
+        <Card>
+          <CardContent className="flex items-center justify-between p-4">
+            <div>
+              <div className="text-sm font-medium">Monte Carlo Simulation</div>
+              <div className="text-xs text-muted-foreground">
+                Shuffle trade order {mcError ? '' : 'to estimate outcome distribution'}
+              </div>
+              {mcError && <div className="text-xs text-rose-500 mt-1">{mcError}</div>}
+            </div>
+            <Button size="sm" onClick={handleRunMonteCarlo} disabled={mcLoading}>
+              {mcLoading ? 'Running...' : 'Run Monte Carlo'}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {mcData && (
+        <>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">Monte Carlo Equity Fan</CardTitle>
+              <p className="text-sm text-muted-foreground">
+                {mcData.n_simulations.toLocaleString()} simulations over {mcData.n_trades} trades
+              </p>
+            </CardHeader>
+            <CardContent>
+              <PortfolioLineChart
+                height={340}
+                format={(v) => money(v, 0)}
+                series={mcSeries}
+              />
+            </CardContent>
+          </Card>
+
+          <div className="grid gap-3 md:grid-cols-5">
+            <Stat
+              label="Prob. of Profit"
+              value={`${num(mcData.simulation_results.probability_of_profit, 1)}%`}
+              tone={mcData.simulation_results.probability_of_profit > 60 ? 'good' : undefined}
+            />
+            <Stat
+              label="Prob. of Ruin"
+              value={`${num(mcData.simulation_results.probability_of_ruin, 1)}%`}
+              tone={mcData.simulation_results.probability_of_ruin > 10 ? 'bad' : 'good'}
+            />
+            <Stat
+              label="Median Final Equity"
+              value={money(mcData.simulation_results.final_equity_median)}
+              tone={mcData.simulation_results.final_equity_median >= (result.capital ?? 0) ? 'good' : 'bad'}
+            />
+            <Stat
+              label="5th Percentile"
+              value={money(mcData.simulation_results.final_equity_p5)}
+              sub="worst likely"
+              tone={mcData.simulation_results.final_equity_p5 >= (result.capital ?? 0) ? 'good' : 'bad'}
+            />
+            <Stat
+              label="95th Percentile"
+              value={money(mcData.simulation_results.final_equity_p95)}
+              sub="best likely"
+              tone="good"
+            />
+            <Stat
+              label="Max DD (95th pct)"
+              value={`${num(mcData.simulation_results.max_drawdown_p95, 1)}%`}
+              tone="bad"
+            />
+            <Stat
+              label="Win Rate"
+              value={`${num(mcData.trade_stats.win_rate, 1)}%`}
+              tone={mcData.trade_stats.win_rate > 50 ? 'good' : 'bad'}
+            />
+            <Stat
+              label="Profit Factor"
+              value={mcData.trade_stats.profit_factor != null ? num(mcData.trade_stats.profit_factor) : '-'}
+              tone={mcData.trade_stats.profit_factor != null && mcData.trade_stats.profit_factor > 1 ? 'good' : 'bad'}
+            />
+            <Stat
+              label="Avg Win"
+              value={money(mcData.trade_stats.avg_win)}
+              tone="good"
+            />
+            <Stat
+              label="Avg Loss"
+              value={money(mcData.trade_stats.avg_loss)}
+              tone="bad"
+            />
+          </div>
+        </>
+      )}
 
       {result.strategy_description && (
         <Card>
