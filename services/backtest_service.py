@@ -915,6 +915,287 @@ def _init_strategies():
                 self._short = True
                 self._sl = bar.close + self._sl_mult * atr
 
+    # ------------------------------------------------------------------
+    # 11. Supertrend + RSI Confirmation
+    # ------------------------------------------------------------------
+    class SupertrendRSI(Strategy):
+        name = "Supertrend + RSI"
+
+        def __init__(self, sym: str, st_period: int = 10, st_mult: float = 3.0, rsi_period: int = 14):
+            self._sym = sym
+            self._st_period = st_period
+            self._st_mult = st_mult
+            self._rsi_period = rsi_period
+
+        def on_start(self, ctx):
+            self._closes: list[float] = []
+            self._highs: list[float] = []
+            self._lows: list[float] = []
+            self._st_upper: float = 0
+            self._st_lower: float = 0
+            self._st_trend: int = 1
+            self._long = False
+            self._short = False
+
+        def _rsi(self) -> float | None:
+            c = self._closes
+            if len(c) < self._rsi_period + 1: return None
+            gains, losses = [], []
+            for i in range(-self._rsi_period, 0):
+                d = c[i] - c[i - 1]
+                gains.append(max(d, 0)); losses.append(max(-d, 0))
+            ag = sum(gains) / self._rsi_period; al = sum(losses) / self._rsi_period
+            return 100 - (100 / (1 + ag / al)) if al else 100.0
+
+        def on_bar(self, ctx, bar):
+            if bar.instrument.symbol != self._sym: return
+            self._closes.append(bar.close); self._highs.append(bar.high); self._lows.append(bar.low)
+            if len(self._closes) < self._st_period + 1: return
+            atr = _atr(self._highs, self._lows, self._closes, self._st_period) or 0
+            if not atr: return
+            hl2 = (bar.high + bar.low) / 2
+            up = hl2 - self._st_mult * atr; dn = hl2 + self._st_mult * atr
+            self._st_lower = max(up, self._st_lower) if bar.close > self._st_lower else up
+            self._st_upper = min(dn, self._st_upper) if bar.close < self._st_upper else dn
+            prev_trend = self._st_trend
+            if bar.close > self._st_upper: self._st_trend = 1
+            elif bar.close < self._st_lower: self._st_trend = -1
+            rsi = self._rsi()
+            inst = bar.instrument; qty = _lot(inst)
+            if self._long and self._st_trend == -1:
+                ctx.sell(inst, quantity=qty); self._long = False
+            if self._short and self._st_trend == 1:
+                ctx.buy(inst, quantity=qty); self._short = False
+            if not self._long and not self._short:
+                if self._st_trend == 1 and prev_trend == -1 and rsi and rsi > 50:
+                    ctx.buy(inst, quantity=qty); self._long = True
+                elif self._st_trend == -1 and prev_trend == 1 and rsi and rsi < 50:
+                    ctx.sell(inst, quantity=qty); self._short = True
+
+    # ------------------------------------------------------------------
+    # 12. EMA Crossover with ATR Trailing Stop
+    # ------------------------------------------------------------------
+    class EMACrossoverATR(Strategy):
+        name = "EMA Crossover + ATR Trail"
+
+        def __init__(self, sym: str, fast: int = 9, slow: int = 21, atr_period: int = 14, trail_mult: float = 2.0):
+            self._sym = sym; self._fast = fast; self._slow = slow
+            self._atr_period = atr_period; self._trail_mult = trail_mult
+
+        def on_start(self, ctx):
+            self._closes: list[float] = []; self._highs: list[float] = []; self._lows: list[float] = []
+            self._long = False; self._short = False; self._sl = 0.0
+
+        def _ema(self, period: int) -> float | None:
+            if len(self._closes) < period: return None
+            mult = 2 / (period + 1); ema = self._closes[-period]
+            for p in self._closes[-period + 1:]: ema = p * mult + ema * (1 - mult)
+            return ema
+
+        def on_bar(self, ctx, bar):
+            if bar.instrument.symbol != self._sym: return
+            self._closes.append(bar.close); self._highs.append(bar.high); self._lows.append(bar.low)
+            fast = self._ema(self._fast); slow = self._ema(self._slow)
+            atr = _atr(self._highs, self._lows, self._closes, self._atr_period)
+            if not fast or not slow or not atr: return
+            inst = bar.instrument; qty = _lot(inst)
+            if self._long:
+                self._sl = max(self._sl, bar.close - self._trail_mult * atr)
+                if bar.close < self._sl: ctx.sell(inst, quantity=qty); self._long = False
+                return
+            if self._short:
+                self._sl = min(self._sl, bar.close + self._trail_mult * atr)
+                if bar.close > self._sl: ctx.buy(inst, quantity=qty); self._short = False
+                return
+            prev_fast = self._ema(self._fast) if len(self._closes) > self._fast + 1 else None
+            if fast > slow and (prev_fast is None or prev_fast <= slow):
+                ctx.buy(inst, quantity=qty); self._long = True; self._sl = bar.close - self._trail_mult * atr
+            elif fast < slow and (prev_fast is None or prev_fast >= slow):
+                ctx.sell(inst, quantity=qty); self._short = True; self._sl = bar.close + self._trail_mult * atr
+
+    # ------------------------------------------------------------------
+    # 13. Donchian Channel Breakout (20/10)
+    # ------------------------------------------------------------------
+    class DonchianBreakout(Strategy):
+        name = "Donchian Channel Breakout"
+
+        def __init__(self, sym: str, entry_period: int = 20, exit_period: int = 10):
+            self._sym = sym; self._entry = entry_period; self._exit = exit_period
+
+        def on_start(self, ctx):
+            self._highs: list[float] = []; self._lows: list[float] = []; self._closes: list[float] = []
+            self._long = False; self._short = False
+
+        def on_bar(self, ctx, bar):
+            if bar.instrument.symbol != self._sym: return
+            self._highs.append(bar.high); self._lows.append(bar.low); self._closes.append(bar.close)
+            if len(self._highs) < self._entry + 1: return
+            inst = bar.instrument; qty = _lot(inst)
+            entry_high = max(self._highs[-self._entry - 1:-1])
+            entry_low = min(self._lows[-self._entry - 1:-1])
+            exit_high = max(self._highs[-self._exit - 1:-1]) if len(self._highs) > self._exit else entry_high
+            exit_low = min(self._lows[-self._exit - 1:-1]) if len(self._lows) > self._exit else entry_low
+            if self._long and bar.close < exit_low: ctx.sell(inst, quantity=qty); self._long = False
+            if self._short and bar.close > exit_high: ctx.buy(inst, quantity=qty); self._short = False
+            if not self._long and not self._short:
+                if bar.close > entry_high: ctx.buy(inst, quantity=qty); self._long = True
+                elif bar.close < entry_low: ctx.sell(inst, quantity=qty); self._short = True
+
+    # ------------------------------------------------------------------
+    # 14. Keltner Channel Mean Reversion
+    # ------------------------------------------------------------------
+    class KeltnerReversion(Strategy):
+        name = "Keltner Channel Reversion"
+
+        def __init__(self, sym: str, ema_period: int = 20, atr_period: int = 10, atr_mult: float = 2.0):
+            self._sym = sym; self._ema_period = ema_period
+            self._atr_period = atr_period; self._atr_mult = atr_mult
+
+        def on_start(self, ctx):
+            self._closes: list[float] = []; self._highs: list[float] = []; self._lows: list[float] = []
+            self._long = False; self._short = False; self._entry = 0.0
+
+        def on_bar(self, ctx, bar):
+            if bar.instrument.symbol != self._sym: return
+            self._closes.append(bar.close); self._highs.append(bar.high); self._lows.append(bar.low)
+            if len(self._closes) < self._ema_period: return
+            atr = _atr(self._highs, self._lows, self._closes, self._atr_period)
+            if not atr: return
+            ema = sum(self._closes[-self._ema_period:]) / self._ema_period
+            upper = ema + self._atr_mult * atr; lower = ema - self._atr_mult * atr
+            inst = bar.instrument; qty = _lot(inst)
+            if self._long:
+                if bar.close >= ema or bar.close < self._entry - 2 * atr:
+                    ctx.sell(inst, quantity=qty); self._long = False
+                return
+            if self._short:
+                if bar.close <= ema or bar.close > self._entry + 2 * atr:
+                    ctx.buy(inst, quantity=qty); self._short = False
+                return
+            if bar.close < lower: ctx.buy(inst, quantity=qty); self._long = True; self._entry = bar.close
+            elif bar.close > upper: ctx.sell(inst, quantity=qty); self._short = True; self._entry = bar.close
+
+    # ------------------------------------------------------------------
+    # 15. MACD Histogram Divergence
+    # ------------------------------------------------------------------
+    class MACDDivergence(Strategy):
+        name = "MACD Histogram Divergence"
+
+        def __init__(self, sym: str, fast: int = 12, slow: int = 26, signal: int = 9):
+            self._sym = sym; self._fast = fast; self._slow = slow; self._signal = signal
+
+        def on_start(self, ctx):
+            self._closes: list[float] = []; self._highs: list[float] = []; self._lows: list[float] = []
+            self._macd_hist: list[float] = []; self._long = False; self._short = False
+
+        def _ema_val(self, data: list[float], period: int) -> float | None:
+            if len(data) < period: return None
+            mult = 2 / (period + 1); ema = data[-period]
+            for p in data[-period + 1:]: ema = p * mult + ema * (1 - mult)
+            return ema
+
+        def on_bar(self, ctx, bar):
+            if bar.instrument.symbol != self._sym: return
+            self._closes.append(bar.close); self._highs.append(bar.high); self._lows.append(bar.low)
+            fast_ema = self._ema_val(self._closes, self._fast)
+            slow_ema = self._ema_val(self._closes, self._slow)
+            if fast_ema is None or slow_ema is None: return
+            macd = fast_ema - slow_ema
+            self._macd_hist.append(macd)
+            if len(self._macd_hist) < self._signal + 2: return
+            sig = self._ema_val(self._macd_hist, self._signal) or 0
+            hist = macd - sig
+            prev_hist = self._macd_hist[-2] - (self._ema_val(self._macd_hist[:-1], self._signal) or 0)
+            atr = _atr(self._highs, self._lows, self._closes, 14)
+            inst = bar.instrument; qty = _lot(inst)
+            if self._long and hist < 0 and prev_hist >= 0:
+                ctx.sell(inst, quantity=qty); self._long = False
+            if self._short and hist > 0 and prev_hist <= 0:
+                ctx.buy(inst, quantity=qty); self._short = False
+            if not self._long and not self._short and atr:
+                if hist > 0 and prev_hist <= 0:
+                    ctx.buy(inst, quantity=qty); self._long = True
+                elif hist < 0 and prev_hist >= 0:
+                    ctx.sell(inst, quantity=qty); self._short = True
+
+    # ------------------------------------------------------------------
+    # 16. Range Contraction / Expansion (NR7)
+    # ------------------------------------------------------------------
+    class NR7Breakout(Strategy):
+        name = "NR7 Breakout"
+
+        def __init__(self, sym: str, atr_period: int = 14, tp_mult: float = 2.5, sl_mult: float = 1.0):
+            self._sym = sym; self._atr_period = atr_period
+            self._tp_mult = tp_mult; self._sl_mult = sl_mult
+
+        def on_start(self, ctx):
+            self._ranges: list[float] = []; self._highs: list[float] = []; self._lows: list[float] = []
+            self._closes: list[float] = []; self._long = False; self._short = False
+            self._sl = 0.0; self._tp = 0.0
+
+        def on_bar(self, ctx, bar):
+            if bar.instrument.symbol != self._sym: return
+            self._highs.append(bar.high); self._lows.append(bar.low); self._closes.append(bar.close)
+            self._ranges.append(bar.high - bar.low)
+            if len(self._ranges) < 8: return
+            inst = bar.instrument; qty = _lot(inst)
+            atr = _atr(self._highs, self._lows, self._closes, self._atr_period) or 0
+            if self._long:
+                if bar.close <= self._sl or bar.close >= self._tp:
+                    ctx.sell(inst, quantity=qty); self._long = False
+                return
+            if self._short:
+                if bar.close >= self._sl or bar.close <= self._tp:
+                    ctx.buy(inst, quantity=qty); self._short = False
+                return
+            if not atr: return
+            curr_range = self._ranges[-1]
+            is_nr7 = all(curr_range <= r for r in self._ranges[-8:-1])
+            if not is_nr7: return
+            prev_h, prev_l = self._highs[-2], self._lows[-2]
+            if bar.close > prev_h:
+                ctx.buy(inst, quantity=qty); self._long = True
+                self._sl = bar.close - atr * self._sl_mult; self._tp = bar.close + atr * self._tp_mult
+            elif bar.close < prev_l:
+                ctx.sell(inst, quantity=qty); self._short = True
+                self._sl = bar.close + atr * self._sl_mult; self._tp = bar.close - atr * self._tp_mult
+
+    # ------------------------------------------------------------------
+    # 17. Dual Thrust (popular in Asian markets)
+    # ------------------------------------------------------------------
+    class DualThrust(Strategy):
+        name = "Dual Thrust"
+
+        def __init__(self, sym: str, lookback: int = 4, k1: float = 0.5, k2: float = 0.5):
+            self._sym = sym; self._lookback = lookback; self._k1 = k1; self._k2 = k2
+
+        def on_start(self, ctx):
+            self._opens: list[float] = []; self._highs: list[float] = []
+            self._lows: list[float] = []; self._closes: list[float] = []
+            self._long = False; self._short = False
+
+        def on_bar(self, ctx, bar):
+            if bar.instrument.symbol != self._sym: return
+            self._opens.append(bar.open); self._highs.append(bar.high)
+            self._lows.append(bar.low); self._closes.append(bar.close)
+            if len(self._closes) < self._lookback + 1: return
+            hh = max(self._highs[-self._lookback - 1:-1])
+            hc = max(self._closes[-self._lookback - 1:-1])
+            ll = min(self._lows[-self._lookback - 1:-1])
+            lc = min(self._closes[-self._lookback - 1:-1])
+            rng = max(hh - lc, hc - ll)
+            upper = bar.open + self._k1 * rng; lower = bar.open - self._k2 * rng
+            inst = bar.instrument; qty = _lot(inst)
+            if self._long and bar.close < lower:
+                ctx.sell(inst, quantity=qty); self._long = False
+                ctx.sell(inst, quantity=qty); self._short = True
+            elif self._short and bar.close > upper:
+                ctx.buy(inst, quantity=qty); self._short = False
+                ctx.buy(inst, quantity=qty); self._long = True
+            elif not self._long and not self._short:
+                if bar.close > upper: ctx.buy(inst, quantity=qty); self._long = True
+                elif bar.close < lower: ctx.sell(inst, quantity=qty); self._short = True
+
     # --- Register all ---
     _register("orb_15min", "ORB 15-Min (Research-Backed)",
               "8-year backtested on NIFTY (2017-2026): +91.6% return, 48.7% win rate, Sharpe 1.16, max DD -11.2%, 2,122 trades. Uses first 2x15min candles as the opening range. Buys breakout above OR high, shorts below OR low. SL at opposite OR level, TP at 2x OR range. Short trades = 75% of profits. Friday strongest, Tuesday weakest.",
@@ -965,6 +1246,41 @@ def _init_strategies():
               "Smoothed candle momentum: enters after 3 consecutive Heikin-Ashi bullish/bearish candles (filters noise). Trailing stop at 2xATR. Exits on 2 consecutive opposite HA candles. Trend-following with noise reduction.",
               lambda sym, **kw: HeikinAshiTrend(sym, confirm_bars=kw.get("confirm_bars", 3)),
               source="Dan Valcu, 'Using Heikin-Ashi Technique' (2004) | Stocks & Commodities Magazine")
+
+    _register("supertrend_rsi", "Supertrend + RSI",
+              "Enters on Supertrend direction change confirmed by RSI>50 (long) or RSI<50 (short). Supertrend(10,3) filters noise; RSI(14) confirms momentum. Exits on opposite Supertrend flip.",
+              lambda sym, **kw: SupertrendRSI(sym),
+              source="onetradejournal.com/indicators/supertrend-indicator-guide | Supertrend backtests 2009-2024")
+
+    _register("ema_crossover_atr", "EMA Crossover + ATR Trail",
+              "Fast EMA(9) crosses slow EMA(21) = trend change. Trailing stop at 2xATR protects profits. Combines trend detection with dynamic risk management.",
+              lambda sym, **kw: EMACrossoverATR(sym, fast=kw.get("fast", 9), slow=kw.get("slow", 21)),
+              source="futureshive.com/blog/futures-trading-strategies-indicators-2025 | EMA+ATR strategy")
+
+    _register("donchian_breakout", "Donchian Channel Breakout",
+              "Enter on 20-period high/low breakout (Donchian channel). Exit on 10-period opposite channel. Classic channel breakout — simpler than Turtle but same principle. Tends to catch large moves.",
+              lambda sym, **kw: DonchianBreakout(sym, entry_period=kw.get("entry", 20), exit_period=kw.get("exit", 10)),
+              source="Richard Donchian, 'Trend Following' | Original channel breakout system 1960s")
+
+    _register("keltner_reversion", "Keltner Channel Reversion",
+              "Mean-reversion at Keltner Channel extremes: buy at lower band (EMA - 2xATR), sell at upper band. TP at the EMA (mean). Hard stop at 2xATR beyond entry. Works in ranging markets.",
+              lambda sym, **kw: KeltnerReversion(sym),
+              source="Chester Keltner (1960) + Linda Bradford Raschke modernization | Channel-based mean reversion")
+
+    _register("macd_divergence", "MACD Histogram Divergence",
+              "Enters on MACD histogram zero-line crossover: histogram turns positive = long, negative = short. MACD(12,26,9) is the most widely used momentum oscillator. Exits on opposite crossover.",
+              lambda sym, **kw: MACDDivergence(sym),
+              source="Gerald Appel, 'The Moving Average Convergence-Divergence Trading Method' (1979)")
+
+    _register("nr7_breakout", "NR7 Breakout (Range Compression)",
+              "NR7 = Narrowest Range of last 7 bars (extreme compression). Breakout above previous high or below previous low. TP at 2.5xATR, SL at 1xATR = 2.5:1 R:R. Low frequency, high conviction.",
+              lambda sym, **kw: NR7Breakout(sym),
+              source="Tony Crabel, 'Day Trading with Short Term Price Patterns' (1990) | NR7 pattern research")
+
+    _register("dual_thrust", "Dual Thrust (Asian Markets)",
+              "Popular in Asian futures: compute range = max(HH-LC, HC-LL) over 4 bars. Buy above open+K1*range, sell below open-K2*range. Reversal system — always in the market. Widely used on Nikkei, Hang Seng, SGX.",
+              lambda sym, **kw: DualThrust(sym, k1=kw.get("k1", 0.5), k2=kw.get("k2", 0.5)),
+              source="futureshive.com | Dual Thrust system, adapted from Asian futures markets")
 
     # ------------------------------------------------------------------
     # 8. Regime-Adaptive Momentum/Reversion Switcher
