@@ -317,7 +317,7 @@ function BacktestHistory() {
                   onClick={() => handleRowClick(r)}
                 >
                   <td className="py-2 pr-3 text-xs text-muted-foreground whitespace-nowrap">
-                    {loadingId === r.id ? '...' : r.created_at ? new Date(r.created_at).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '-'}
+                    {loadingId === r.id ? '...' : r.created_at ? new Date(r.created_at + 'Z').toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit', hour12: true }) : '-'}
                   </td>
                   <td className="py-2 pr-3 max-w-[140px] truncate" title={r.strategy_description || r.strategy}>
                     <span className="font-medium text-xs">{r.strategy}</span>

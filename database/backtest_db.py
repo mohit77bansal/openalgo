@@ -48,6 +48,7 @@ class BacktestRun(Base):
     error_message = Column(Text)
     metrics_json = Column(Text)
     equity_json = Column(Text)
+    trades_json = Column(Text)
 
 
 def init_db():
@@ -79,6 +80,7 @@ def save_backtest_run(result: dict) -> int | None:
             error_message=result.get("message"),
             metrics_json=json.dumps(metrics) if metrics else None,
             equity_json=json.dumps(result.get("equity", [])),
+            trades_json=json.dumps(result.get("trades", [])),
         )
         db_session.add(run)
         db_session.commit()
@@ -155,6 +157,8 @@ def get_backtest_run(run_id: int) -> dict | None:
             "error_message": r.error_message,
             "metrics": json.loads(r.metrics_json) if r.metrics_json else {},
             "equity": json.loads(r.equity_json) if r.equity_json else [],
+            "trades": json.loads(r.trades_json) if r.trades_json else [],
+            "strategy_description": r.strategy_description,
         }
     finally:
         db_session.remove()

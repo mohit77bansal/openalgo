@@ -83,13 +83,46 @@ export default function BacktestResults() {
         <Stat
           label="Net P&L"
           value={money(m.net_pnl)}
+          sub={result.capital ? `${(((m.net_pnl ?? 0) / result.capital) * 100).toFixed(2)}% of capital` : undefined}
           tone={(m.net_pnl ?? 0) >= 0 ? 'good' : 'bad'}
         />
         <Stat label="Sharpe" value={num(m.sharpe)} />
         <Stat label="Max Drawdown" value={`${num(m.max_drawdown_pct)}%`} tone="bad" />
-        <Stat label="Trades" value={num(m.n_trades, 0)} />
+        <Stat label="Trades" value={num(m.n_trades, 0)} sub={`Win rate: ${m.n_trades && result.trades?.length ? `${((result.trades.filter((t: Record<string, unknown>) => { const ef = (t.entry_fill ?? {}) as Record<string, unknown>; const xf = (t.exit_fill ?? {}) as Record<string, unknown>; const ep = Number(ef.price ?? 0); const xp = Number(xf.price ?? 0); const dir = String(t.direction ?? ''); return dir === 'BUY' ? xp > ep : xp < ep; }).length / result.trades.length) * 100).toFixed(0)}%` : '-'}`} />
         <Stat label="Fees" value={money(m.fees_total)} />
-        <Stat label="Bars" value={String(result.n_bars)} />
+        <Stat
+          label="Risk:Reward"
+          value={(() => {
+            if (!result.trades?.length) return '-'
+            const wins: number[] = []; const losses: number[] = []
+            for (const t of result.trades as Record<string, unknown>[]) {
+              const ef = (t.entry_fill ?? {}) as Record<string, unknown>
+              const xf = (t.exit_fill ?? {}) as Record<string, unknown>
+              const ep = Number(ef.price ?? 0); const xp = Number(xf.price ?? 0)
+              const dir = String(t.direction ?? '')
+              const pnl = dir === 'BUY' ? xp - ep : ep - xp
+              if (pnl >= 0) wins.push(pnl); else losses.push(Math.abs(pnl))
+            }
+            const avgWin = wins.length ? wins.reduce((a, b) => a + b, 0) / wins.length : 0
+            const avgLoss = losses.length ? losses.reduce((a, b) => a + b, 0) / losses.length : 1
+            return avgLoss > 0 ? `1:${(avgWin / avgLoss).toFixed(1)}` : '-'
+          })()}
+          sub="avg win : avg loss"
+        />
+        <Stat label="Profit Factor" value={(() => {
+          if (!result.trades?.length) return '-'
+          let grossWin = 0; let grossLoss = 0
+          for (const t of result.trades as Record<string, unknown>[]) {
+            const ef = (t.entry_fill ?? {}) as Record<string, unknown>
+            const xf = (t.exit_fill ?? {}) as Record<string, unknown>
+            const ep = Number(ef.price ?? 0); const xp = Number(xf.price ?? 0)
+            const dir = String(t.direction ?? '')
+            const pnl = dir === 'BUY' ? xp - ep : ep - xp
+            if (pnl >= 0) grossWin += pnl; else grossLoss += Math.abs(pnl)
+          }
+          return grossLoss > 0 ? (grossWin / grossLoss).toFixed(2) : '-'
+        })()} sub="gross win / gross loss" />
+        <Stat label="Capital" value={money(result.capital, 0)} sub={`${result.interval} · ${result.source === 'db' ? 'AngelOne' : 'Synthetic'}`} />
       </div>
 
       <Card>
@@ -143,23 +176,40 @@ export default function BacktestResults() {
                 </thead>
                 <tbody>
                   {result.trades.map((t: Record<string, unknown>, i: number) => {
-                    const pnl = Number(t.pnl ?? t.realized_pnl ?? 0)
+                    const ef = (t.entry_fill ?? {}) as Record<string, unknown>
+                    const xf = (t.exit_fill ?? {}) as Record<string, unknown>
+                    const inst = (t.instrument ?? ef.instrument ?? {}) as Record<string, unknown>
+                    const entryPrice = Number(ef.price ?? t.entry_price ?? 0)
+                    const exitPrice = Number(xf.price ?? t.exit_price ?? 0)
+                    const qty = Number(ef.quantity ?? xf.quantity ?? t.quantity ?? t.qty ?? 0)
+                    const entryFees = Number(ef.fees ?? 0)
+                    const exitFees = Number(xf.fees ?? 0)
+                    const totalFees = entryFees + exitFees
+                    const dir = String(t.direction ?? t.side ?? '-')
+                    const sign = dir === 'BUY' || dir === 'LONG' ? 1 : -1
+                    const pnl = Number(t.pnl ?? t.realized_pnl ?? ((exitPrice - entryPrice) * qty * sign - totalFees))
+                    const entryTs = String(ef.ts ?? ef.timestamp ?? t.entry_time ?? t.entry_ts ?? '-')
+                    const exitTs = String(xf.ts ?? xf.timestamp ?? t.exit_time ?? t.exit_ts ?? '-')
+                    const formatTs = (ts: string) => {
+                      if (ts === '-') return '-'
+                      try { return new Date(ts).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }) } catch { return ts.slice(0, 16) }
+                    }
                     return (
                       <tr key={i} className="border-b border-border/50 last:border-0">
                         <td className="py-1.5 pr-3 text-muted-foreground">{i + 1}</td>
-                        <td className="py-1.5 pr-3 font-medium">{String(t.instrument_id ?? t.instrument ?? t.symbol ?? '-')}</td>
-                        <td className={cn('py-1.5 pr-3 font-medium', String(t.side ?? '').includes('BUY') || String(t.direction ?? '') === 'LONG' ? 'text-emerald-500' : 'text-rose-500')}>
-                          {String(t.side ?? t.direction ?? '-')}
+                        <td className="py-1.5 pr-3 font-medium text-xs">{String(inst.symbol ?? t.instrument_id ?? '-')}</td>
+                        <td className={cn('py-1.5 pr-3 font-medium', sign > 0 ? 'text-emerald-500' : 'text-rose-500')}>
+                          {dir}
                         </td>
-                        <td className="py-1.5 pr-3 text-muted-foreground whitespace-nowrap">{String(t.entry_time ?? t.entry_ts ?? '-').slice(0, 19)}</td>
-                        <td className="py-1.5 pr-3 text-right tabular-nums">{Number(t.entry_price ?? 0).toFixed(2)}</td>
-                        <td className="py-1.5 pr-3 text-muted-foreground whitespace-nowrap">{String(t.exit_time ?? t.exit_ts ?? '-').slice(0, 19)}</td>
-                        <td className="py-1.5 pr-3 text-right tabular-nums">{Number(t.exit_price ?? 0).toFixed(2)}</td>
-                        <td className="py-1.5 pr-3 text-right tabular-nums">{String(t.quantity ?? t.qty ?? '-')}</td>
+                        <td className="py-1.5 pr-3 text-muted-foreground whitespace-nowrap">{formatTs(entryTs)}</td>
+                        <td className="py-1.5 pr-3 text-right tabular-nums">{entryPrice.toFixed(2)}</td>
+                        <td className="py-1.5 pr-3 text-muted-foreground whitespace-nowrap">{formatTs(exitTs)}</td>
+                        <td className="py-1.5 pr-3 text-right tabular-nums">{exitPrice.toFixed(2)}</td>
+                        <td className="py-1.5 pr-3 text-right tabular-nums">{qty || '-'}</td>
                         <td className={cn('py-1.5 pr-3 text-right tabular-nums font-medium', pnl >= 0 ? 'text-emerald-500' : 'text-rose-500')}>
                           {money(pnl)}
                         </td>
-                        <td className="py-1.5 text-right tabular-nums">{money(Number(t.fees ?? t.total_fees ?? 0))}</td>
+                        <td className="py-1.5 text-right tabular-nums">{money(totalFees)}</td>
                       </tr>
                     )
                   })}
