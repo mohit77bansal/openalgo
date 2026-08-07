@@ -54,6 +54,8 @@ export interface BacktestRunResponse {
   message?: string
   strategy: string
   strategy_description?: string
+  start?: string
+  end?: string
   symbol: string
   exchange: string
   interval: string

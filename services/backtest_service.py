@@ -138,13 +138,36 @@ def _build_synthetic_source(symbol: str, exchange: str, n_bars: int) -> _StaticS
 # --------------------------------------------------------------------------- #
 def _build_db_source(symbol: str, exchange: str, interval: str, start: str | None, end: str | None):
     """Returns (_StaticSource, n_bars) or raises ValueError('no data ...')."""
-    from database.historify_db import get_ohlcv
+    from database.historify_db import get_connection, get_ohlcv
     from qbacktest.core.calendar import IST
     from qbacktest.core.types import Bar
+    import pandas as pd
 
     start_ts = int(datetime.fromisoformat(start).timestamp()) if start else None
     end_ts = int(datetime.fromisoformat(end).timestamp()) if end else None
+
+    # Try the standard get_ohlcv first (handles storage intervals + aggregation)
     df = get_ohlcv(symbol, exchange, interval, start_timestamp=start_ts, end_timestamp=end_ts)
+
+    # If empty, query DuckDB directly — data may be stored at this interval
+    # but not in Historify's STORAGE_INTERVALS list (e.g. 5m, 15m, 1h ingested
+    # directly from the broker).
+    if df is None or len(df) == 0:
+        try:
+            with get_connection() as con:
+                sql = "SELECT timestamp, open, high, low, close, volume, oi FROM market_data WHERE symbol=? AND exchange=? AND interval=? "
+                params = [symbol, exchange, interval]
+                if start_ts:
+                    sql += "AND timestamp >= ? "
+                    params.append(start_ts)
+                if end_ts:
+                    sql += "AND timestamp <= ? "
+                    params.append(end_ts)
+                sql += "ORDER BY timestamp ASC"
+                df = con.execute(sql, params).fetchdf()
+        except Exception:
+            df = pd.DataFrame()
+
     if df is None or len(df) == 0:
         raise ValueError(
             f"no {interval} data for {symbol}/{exchange} in the Historify store — "

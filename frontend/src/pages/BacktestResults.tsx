@@ -66,17 +66,18 @@ export default function BacktestResults() {
 
   return (
     <div className="container mx-auto space-y-4 p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Backtest Report</h1>
-          <p className="text-sm text-muted-foreground">
-            {result.strategy} · {result.symbol} {result.exchange} · {result.interval} ·{' '}
-            {result.source} · {result.cost_model}
-          </p>
-        </div>
-        <Button variant="outline" onClick={() => navigate('/backtest')}>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button variant="outline" size="sm" onClick={() => navigate('/backtest')}>
           Back to Builder
         </Button>
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">{result.strategy}</h1>
+          <p className="text-sm text-muted-foreground">
+            {result.symbol}/{result.exchange} · {result.interval} ·{' '}
+            {result.source === 'db' ? 'AngelOne' : 'Synthetic'} · {result.cost_model}
+            {result.start ? ` · ${result.start} → ${result.end}` : ''}
+          </p>
+        </div>
       </div>
 
       <div className="grid gap-3 md:grid-cols-4">
