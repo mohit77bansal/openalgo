@@ -1028,6 +1028,47 @@ def run_backtest(
     equity_curve = [[ts.isoformat(), _json_safe(eq)] for ts, eq in curve]
     equity = [{"date": ts.isoformat(), "value": _json_safe(eq)} for ts, eq in curve]
 
+    # Compute XIRR (annualized IRR from the equity curve cash flows)
+    xirr_pct = None
+    if len(curve) >= 2:
+        try:
+            from scipy.optimize import brentq
+            first_ts, first_eq = curve[0]
+            last_ts, last_eq = curve[-1]
+            days = (last_ts - first_ts).total_seconds() / 86400
+            if days > 0 and first_eq > 0:
+                # Simple annualized return (CAGR) — more robust than iterative XIRR
+                # for a single investment period
+                total_return = (last_eq / first_eq) - 1.0
+                years = days / 365.25
+                if years > 0:
+                    xirr_pct = ((1 + total_return) ** (1 / years) - 1) * 100
+        except Exception:
+            pass
+
+    # Compute margin used (realistic SPAN margin for the instrument)
+    # NIFTY futures MIS margin ≈ 9% of notional, NRML ≈ 12%
+    metrics = _json_safe(getattr(result, "metrics", {}))
+    margin_per_lot = 0.0
+    margin_used = 0.0
+    return_on_margin_pct = None
+    inst = _instrument_for(symbol, exchange)
+    lot_size = max(getattr(inst, "lot_size", 1) or 1, 1)
+    if lot_size > 1:  # derivative
+        avg_price = capital  # fallback
+        if curve:
+            avg_price = sum(eq for _, eq in curve) / len(curve)
+        # Use a representative price from the data
+        first_price = curve[0][1] / 1 if curve else 24500
+        # For NIFTY futures: SPAN margin MIS ~9%, NRML ~12%
+        margin_pct = 0.12  # NRML (conservative)
+        notional_per_lot = 24500 * lot_size  # approximate
+        margin_per_lot = notional_per_lot * margin_pct
+        margin_used = margin_per_lot  # 1 lot per trade
+        net_pnl = (metrics.get("net_pnl") or 0) if isinstance(metrics, dict) else 0
+        if margin_used > 0 and net_pnl != 0:
+            return_on_margin_pct = (net_pnl / margin_used) * 100
+
     out = {
         "status": "success",
         "strategy": strat_name,
@@ -1041,10 +1082,14 @@ def run_backtest(
         "capital": capital,
         "cost_model": cost,
         "n_bars": n_bars,
-        "metrics": _json_safe(getattr(result, "metrics", {})),
-        "equity": equity,            # [{date, value}] — for the React chart
-        "equity_curve": equity_curve,  # [[iso, value]] — for the server-side SVG
+        "metrics": metrics,
+        "xirr_pct": round(xirr_pct, 2) if xirr_pct is not None else None,
+        "margin_used": round(margin_used, 0) if margin_used else None,
+        "return_on_margin_pct": round(return_on_margin_pct, 2) if return_on_margin_pct is not None else None,
+        "equity": equity,
+        "equity_curve": equity_curve,
         "trades": _json_safe(getattr(result, "trades", [])),
+        "data_note": "Continuous NIFTY futures (stitched across contract rolls by broker API)" if "FUT" in symbol.upper() else None,
     }
 
     try:

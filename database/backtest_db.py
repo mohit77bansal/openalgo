@@ -44,6 +44,9 @@ class BacktestRun(Base):
     fees_total = Column(Float, default=0.0)
     sharpe = Column(Float)
     max_drawdown_pct = Column(Float)
+    xirr_pct = Column(Float)
+    margin_used = Column(Float)
+    return_on_margin_pct = Column(Float)
     status = Column(String(10), nullable=False, default="success")
     error_message = Column(Text)
     metrics_json = Column(Text)
@@ -76,6 +79,9 @@ def save_backtest_run(result: dict) -> int | None:
             fees_total=metrics.get("fees_total", 0),
             sharpe=metrics.get("sharpe"),
             max_drawdown_pct=metrics.get("max_drawdown_pct"),
+            xirr_pct=result.get("xirr_pct"),
+            margin_used=result.get("margin_used"),
+            return_on_margin_pct=result.get("return_on_margin_pct"),
             status=result.get("status", "error"),
             error_message=result.get("message"),
             metrics_json=json.dumps(metrics) if metrics else None,
@@ -121,6 +127,9 @@ def list_backtest_runs(limit: int = 50) -> list[dict]:
                 "fees_total": r.fees_total,
                 "sharpe": r.sharpe,
                 "max_drawdown_pct": r.max_drawdown_pct,
+                "xirr_pct": r.xirr_pct,
+                "margin_used": r.margin_used,
+                "return_on_margin_pct": r.return_on_margin_pct,
                 "status": r.status,
             }
             for r in runs

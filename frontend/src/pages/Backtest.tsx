@@ -305,6 +305,8 @@ function BacktestHistory() {
                 <th className="pb-2 pr-3">Trades</th>
                 <th className="pb-2 pr-3 text-right">Net P&L</th>
                 <th className="pb-2 pr-3 text-right">P&L %</th>
+                <th className="pb-2 pr-3 text-right">XIRR %</th>
+                <th className="pb-2 pr-3 text-right">Margin RoM%</th>
                 <th className="pb-2 pr-3 text-right">Fees</th>
                 <th className="pb-2">Status</th>
               </tr>
@@ -335,6 +337,12 @@ function BacktestHistory() {
                   </td>
                   <td className={`py-2 pr-3 text-right tabular-nums text-xs font-medium ${(r.net_pnl ?? 0) >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
                     {r.capital && r.net_pnl != null ? `${((r.net_pnl / r.capital) * 100).toFixed(2)}%` : '-'}
+                  </td>
+                  <td className={`py-2 pr-3 text-right tabular-nums text-xs ${(r.xirr_pct ?? 0) >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                    {r.xirr_pct != null ? `${r.xirr_pct.toFixed(1)}%` : '-'}
+                  </td>
+                  <td className={`py-2 pr-3 text-right tabular-nums text-xs font-medium ${(r.return_on_margin_pct ?? 0) >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                    {r.return_on_margin_pct != null ? `${r.return_on_margin_pct.toFixed(1)}%` : '-'}
                   </td>
                   <td className="py-2 pr-3 text-right tabular-nums text-xs">
                     {r.fees_total != null ? `₹${r.fees_total.toLocaleString('en-IN', { maximumFractionDigits: 0 })}` : '-'}

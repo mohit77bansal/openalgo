@@ -80,12 +80,35 @@ export default function BacktestResults() {
         </div>
       </div>
 
+      {result.strategy_description && (
+        <Card>
+          <CardContent className="p-4">
+            <div className="text-xs font-medium text-muted-foreground mb-1">Strategy Logic</div>
+            <p className="text-sm">{result.strategy_description}</p>
+            {result.data_note && (
+              <p className="text-xs text-amber-500 mt-2">{result.data_note}</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       <div className="grid gap-3 md:grid-cols-4">
         <Stat
           label="Net P&L"
           value={money(m.net_pnl)}
           sub={result.capital ? `${(((m.net_pnl ?? 0) / result.capital) * 100).toFixed(2)}% of capital` : undefined}
           tone={(m.net_pnl ?? 0) >= 0 ? 'good' : 'bad'}
+        />
+        <Stat
+          label="XIRR (Annualized)"
+          value={result.xirr_pct != null ? `${result.xirr_pct.toFixed(1)}%` : '-'}
+          tone={result.xirr_pct != null ? ((result.xirr_pct ?? 0) >= 0 ? 'good' : 'bad') : undefined}
+        />
+        <Stat
+          label="Return on Margin"
+          value={result.return_on_margin_pct != null ? `${result.return_on_margin_pct.toFixed(1)}%` : '-'}
+          sub={result.margin_used ? `Margin: ${money(result.margin_used, 0)}/lot` : undefined}
+          tone={result.return_on_margin_pct != null ? ((result.return_on_margin_pct ?? 0) >= 0 ? 'good' : 'bad') : undefined}
         />
         <Stat label="Sharpe" value={num(m.sharpe)} />
         <Stat label="Max Drawdown" value={`${num(m.max_drawdown_pct)}%`} tone="bad" />

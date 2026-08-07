@@ -66,6 +66,10 @@ export interface BacktestRunResponse {
   metrics: BacktestMetrics
   equity: BacktestCurvePoint[]
   trades: BacktestTrade[]
+  xirr_pct?: number | null
+  margin_used?: number | null
+  return_on_margin_pct?: number | null
+  data_note?: string | null
 }
 
 /**
@@ -96,6 +100,9 @@ export interface BacktestRunSummary {
   fees_total: number
   sharpe: number | null
   max_drawdown_pct: number | null
+  xirr_pct: number | null
+  margin_used: number | null
+  return_on_margin_pct: number | null
   status: string
 }
 
