@@ -310,6 +310,12 @@ def react_oiprofile():
     return serve_react_app()
 
 
+# Paper Trading — automated paper trading dashboard
+@react_bp.route("/paper")
+def react_paper():
+    return serve_react_app()
+
+
 # Arbitrage - Futures calendar-spread scanner
 @react_bp.route("/arbitrage")
 def react_arbitrage():

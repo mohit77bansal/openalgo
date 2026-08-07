@@ -101,3 +101,54 @@ export function isActiveRoute(pathname: string, href: string): boolean {
   }
   return pathname === href
 }
+
+// Grouped navigation for the sidebar
+export interface NavGroup {
+  label: string
+  items: NavItem[]
+}
+
+export const sidebarGroups: NavGroup[] = [
+  {
+    label: 'Main',
+    items: [
+      { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+      { href: '/trading', label: 'Trading', icon: CandlestickChart },
+      { href: '/orderbook', label: 'Orderbook', icon: ClipboardList },
+      { href: '/tradebook', label: 'Tradebook', icon: FileText },
+      { href: '/positions', label: 'Positions', icon: TrendingUp },
+    ],
+  },
+  {
+    label: 'Strategy',
+    items: [
+      { href: '/strategy', label: 'Strategy', icon: Code2 },
+      { href: '/backtest', label: 'Backtest', icon: LineChart },
+      { href: '/flow', label: 'Flow Editor', icon: Workflow },
+      { href: '/python', label: 'Python Strategies', icon: Code2 },
+      { href: '/scalping', label: 'Scalping', icon: Zap },
+    ],
+  },
+  {
+    label: 'Data',
+    items: [
+      { href: '/platforms', label: 'Platforms', icon: Layers },
+      { href: '/logs', label: 'Logs', icon: FileBarChart },
+      { href: '/tools', label: 'Tools', icon: Wrench },
+      { href: '/historify', label: 'Historify', icon: Database },
+      { href: '/pnl-tracker', label: 'PnL Tracker', icon: BarChart3 },
+    ],
+  },
+  {
+    label: 'Settings',
+    items: [
+      { href: '/profile', label: 'Profile', icon: User },
+      { href: '/apikey', label: 'API Key', icon: Key },
+      { href: '/action-center', label: 'Action Center', icon: Bell },
+      { href: '/master-contract', label: 'Master Contract', icon: FileStack },
+      { href: '/telegram', label: 'Telegram Bot', icon: MessageSquare },
+      { href: '/whatsapp', label: 'WhatsApp Bot', icon: MessageCircle },
+      { href: '/holdings', label: 'Holdings', icon: ClipboardList },
+    ],
+  },
+]
