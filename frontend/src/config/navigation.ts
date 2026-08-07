@@ -14,6 +14,7 @@ import {
   Key,
   Layers,
   LayoutDashboard,
+  LineChart,
   type LucideIcon,
   MessageCircle,
   MessageSquare,
@@ -43,6 +44,7 @@ export const navItems: NavItem[] = [
   { href: '/trading', label: 'Trading', icon: CandlestickChart },
   { href: '/platforms', label: 'Platforms', icon: Layers },
   { href: '/strategy', label: 'Strategy', icon: Code2 },
+  { href: '/backtest', label: 'Backtest', icon: LineChart },
   { href: '/logs', label: 'Logs', icon: FileBarChart },
   { href: '/tools', label: 'Tools', icon: Wrench },
 ]

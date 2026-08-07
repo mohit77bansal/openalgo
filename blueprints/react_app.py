@@ -212,6 +212,18 @@ def react_sip_backtester():
     return serve_react_app()
 
 
+# Backtest (event-driven engine — demo + Historify sources)
+@react_bp.route("/backtest")
+def react_backtest():
+    return serve_react_app()
+
+
+# Backtest report (equity curve + metrics for the last run)
+@react_bp.route("/backtest/results")
+def react_backtest_results():
+    return serve_react_app()
+
+
 # The former path. Kept so an existing bookmark reaches the SPA, which
 # redirects it to the new one rather than showing a not-found.
 @react_bp.route("/portfolio")

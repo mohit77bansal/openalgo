@@ -13,6 +13,8 @@ import { useBrokerStore } from '@/stores/brokerStore'
 const Home = lazy(() => import('@/pages/Home'))
 const PortfolioBacktester = lazy(() => import('@/pages/PortfolioBacktester'))
 const PortfolioBacktesterResults = lazy(() => import('@/pages/PortfolioBacktesterResults'))
+const Backtest = lazy(() => import('@/pages/Backtest'))
+const BacktestResults = lazy(() => import('@/pages/BacktestResults'))
 const SipBacktester = lazy(() => import('@/pages/SipBacktester'))
 const SipBacktesterResults = lazy(() => import('@/pages/SipBacktesterResults'))
 const PortfolioAnalyzer = lazy(() => import('@/pages/PortfolioAnalyzer'))
@@ -208,10 +210,9 @@ function App() {
                   element={<Navigate to="/portfolio-backtester" replace />}
                 />
                 <Route path="/sip-backtester" element={<SipBacktester />} />
-                <Route
-                  path="/sip-backtester/results"
-                  element={<SipBacktesterResults />}
-                />
+                <Route path="/sip-backtester/results" element={<SipBacktesterResults />} />
+                <Route path="/backtest" element={<Backtest />} />
+                <Route path="/backtest/results" element={<BacktestResults />} />
                 <Route path="/portfolio-analyzer" element={<PortfolioAnalyzer />} />
                 <Route path="/gocharting" element={<GoCharting />} />
                 <Route path="/pnl-tracker" element={<PnLTracker />} />

@@ -13,7 +13,7 @@
 
 from flask import Blueprint, jsonify, render_template_string, request
 
-from services.backtest_service import DEFAULT_CAPITAL, run_demo_backtest
+from services.backtest_service import DEFAULT_CAPITAL, run_backtest, run_demo_backtest
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -103,14 +103,17 @@ def backtest_home():
 
 @backtest_bp.route("/api/run", methods=["GET", "POST"])
 def backtest_run_api():
-    """JSON endpoint: run the demo backtest and return metrics + equity curve."""
+    """JSON endpoint: run a backtest (source=demo|db) and return metrics + equity curve."""
     params = request.get_json(silent=True) or request.values
-    capital = params.get("capital", DEFAULT_CAPITAL)
-    cost = params.get("cost", "zerodha")
-    try:
-        capital = float(capital)
-    except (TypeError, ValueError):
-        capital = DEFAULT_CAPITAL
-    result = run_demo_backtest(capital=capital, cost=cost)
+    result = run_backtest(
+        source=params.get("source", "demo"),
+        symbol=params.get("symbol", "NIFTY"),
+        exchange=params.get("exchange", "NSE"),
+        interval=params.get("interval", "D"),
+        start=params.get("start") or None,
+        end=params.get("end") or None,
+        capital=params.get("capital", DEFAULT_CAPITAL),
+        cost=params.get("cost", "zerodha"),
+    )
     status = 200 if result.get("status") == "success" else 500
     return jsonify(result), status
