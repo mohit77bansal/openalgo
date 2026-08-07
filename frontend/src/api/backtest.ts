@@ -66,6 +66,7 @@ export interface BacktestRunResponse {
   metrics: BacktestMetrics
   equity: BacktestCurvePoint[]
   trades: BacktestTrade[]
+  ohlc?: { time: string; open: number; high: number; low: number; close: number }[]
   xirr_pct?: number | null
   margin_used?: number | null
   return_on_margin_pct?: number | null

@@ -7,6 +7,7 @@
  * so we send them back to the form rather than render an empty report.
  */
 import { Navigate, useNavigate } from 'react-router'
+import { OHLCChart } from '@/components/backtest/OHLCChart'
 import { PortfolioLineChart } from '@/components/portfolio/PortfolioLineChart'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -148,6 +149,17 @@ export default function BacktestResults() {
         })()} sub="gross win / gross loss" />
         <Stat label="Capital" value={money(result.capital, 0)} sub={`${result.interval} · ${result.source === 'db' ? 'AngelOne' : 'Synthetic'}`} />
       </div>
+
+      {result.ohlc && result.ohlc.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Price Chart with Trades</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <OHLCChart bars={result.ohlc} trades={result.trades} height={400} />
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader className="pb-2">

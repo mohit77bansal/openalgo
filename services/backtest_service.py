@@ -1069,6 +1069,12 @@ def run_backtest(
         if margin_used > 0 and net_pnl != 0:
             return_on_margin_pct = (net_pnl / margin_used) * 100
 
+    # Raw OHLC bars for the candlestick chart on the frontend.
+    ohlc = [
+        {"time": b.ts.isoformat(), "open": b.open, "high": b.high, "low": b.low, "close": b.close}
+        for b in source_obj.bars
+    ]
+
     out = {
         "status": "success",
         "strategy": strat_name,
@@ -1089,6 +1095,7 @@ def run_backtest(
         "equity": equity,
         "equity_curve": equity_curve,
         "trades": _json_safe(getattr(result, "trades", [])),
+        "ohlc": ohlc,
         "data_note": "Continuous NIFTY futures (stitched across contract rolls by broker API)" if "FUT" in symbol.upper() else None,
     }
 

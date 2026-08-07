@@ -6,7 +6,16 @@
  */
 
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
+import {
+  type ColumnDef,
+  type SortingState,
+  flexRender,
+  getCoreRowModel,
+  getFilteredRowModel,
+  getSortedRowModel,
+  useReactTable,
+} from '@tanstack/react-table'
+import { useCallback, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { type BacktestSource, runBacktest, getBacktestHistory, getBacktestDetail, getBacktestStrategies } from '@/api/backtest'
 import type { BacktestRunSummary, StrategyOption } from '@/api/backtest'
@@ -244,10 +253,276 @@ export default function Backtest() {
   )
 }
 
+/* ---------------------------------------------------------------------------
+ * Helpers: formatting + CSV
+ * ------------------------------------------------------------------------ */
+
+function formatTime(created_at: string | null | undefined): string {
+  if (!created_at) return '-'
+  return new Date(created_at + 'Z').toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit',
+    month: 'short',
+    year: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  })
+}
+
+function formatSource(source: string): string {
+  if (source === 'db') return 'AngelOne'
+  if (source === 'demo') return 'Synthetic'
+  return source
+}
+
+function pnlPct(row: BacktestRunSummary): number | null {
+  if (row.capital && row.net_pnl != null) return (row.net_pnl / row.capital) * 100
+  return null
+}
+
+function pnlColor(value: number | null | undefined): string {
+  if (value == null) return ''
+  return value >= 0 ? 'text-emerald-500' : 'text-rose-500'
+}
+
+function downloadCsv(rows: BacktestRunSummary[]): void {
+  const headers = [
+    'Time',
+    'Strategy',
+    'Symbol',
+    'Exchange',
+    'Start',
+    'End',
+    'Interval',
+    'Source',
+    'Capital',
+    'Trades',
+    'Net P&L',
+    'P&L %',
+    'XIRR %',
+    'RoM %',
+    'Fees',
+    'Status',
+  ]
+
+  const escape = (v: string) => (v.includes(',') || v.includes('"') ? `"${v.replace(/"/g, '""')}"` : v)
+
+  const csvRows = rows.map((r) => {
+    const pct = pnlPct(r)
+    return [
+      formatTime(r.created_at),
+      r.strategy,
+      r.symbol,
+      r.exchange,
+      r.start_date ?? '',
+      r.end_date ?? '',
+      r.interval,
+      formatSource(r.source),
+      String(r.capital ?? ''),
+      String(r.n_trades ?? ''),
+      r.net_pnl != null ? String(r.net_pnl) : '',
+      pct != null ? pct.toFixed(2) : '',
+      r.xirr_pct != null ? r.xirr_pct.toFixed(1) : '',
+      r.return_on_margin_pct != null ? r.return_on_margin_pct.toFixed(1) : '',
+      r.fees_total != null ? String(r.fees_total) : '',
+      r.status,
+    ]
+      .map(escape)
+      .join(',')
+  })
+
+  const csvContent = [headers.join(','), ...csvRows].join('\n')
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `backtest_history_${new Date().toISOString().slice(0, 10)}.csv`
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
+/* ---------------------------------------------------------------------------
+ * Sort indicator
+ * ------------------------------------------------------------------------ */
+
+function SortIndicator({ direction }: { direction: false | 'asc' | 'desc' }) {
+  if (!direction) return <span className="ml-1 text-muted-foreground/40">&#8597;</span>
+  return <span className="ml-1">{direction === 'asc' ? '▲' : '▼'}</span>
+}
+
+/* ---------------------------------------------------------------------------
+ * Column definitions (stable reference via module scope)
+ * ------------------------------------------------------------------------ */
+
+const columns: ColumnDef<BacktestRunSummary, unknown>[] = [
+  {
+    accessorKey: 'created_at',
+    header: 'Time',
+    cell: ({ row }) => (
+      <span className="text-xs text-muted-foreground whitespace-nowrap">
+        {formatTime(row.original.created_at)}
+      </span>
+    ),
+    sortingFn: 'datetime',
+  },
+  {
+    accessorKey: 'strategy',
+    header: 'Strategy',
+    cell: ({ row }) => (
+      <span
+        className="font-medium text-xs max-w-[140px] truncate block"
+        title={row.original.strategy_description || row.original.strategy}
+      >
+        {row.original.strategy}
+      </span>
+    ),
+    enableGlobalFilter: true,
+  },
+  {
+    id: 'instrument',
+    accessorFn: (row) => `${row.symbol}/${row.exchange}`,
+    header: 'Instrument',
+    cell: ({ row }) => (
+      <span className="font-medium text-xs whitespace-nowrap">
+        {row.original.symbol}
+        <span className="text-muted-foreground">/{row.original.exchange}</span>
+      </span>
+    ),
+  },
+  {
+    id: 'period',
+    accessorFn: (row) => row.start_date ?? '',
+    header: 'Period',
+    cell: ({ row }) => (
+      <span className="text-xs text-muted-foreground whitespace-nowrap">
+        {row.original.start_date || '—'} &rarr; {row.original.end_date || '—'}
+      </span>
+    ),
+    enableSorting: false,
+  },
+  {
+    accessorKey: 'interval',
+    header: 'Freq',
+    cell: ({ getValue }) => <span className="text-xs">{getValue<string>()}</span>,
+    enableSorting: false,
+  },
+  {
+    accessorKey: 'source',
+    header: 'Source',
+    cell: ({ getValue }) => <span className="text-xs">{formatSource(getValue<string>())}</span>,
+    enableSorting: false,
+  },
+  {
+    accessorKey: 'capital',
+    header: 'Capital',
+    cell: ({ getValue }) => (
+      <span className="text-right tabular-nums text-xs block">
+        &#8377;{getValue<number>()?.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+      </span>
+    ),
+    meta: { align: 'right' },
+  },
+  {
+    accessorKey: 'n_trades',
+    header: 'Trades',
+    cell: ({ getValue }) => <span className="tabular-nums text-xs">{getValue<number>()}</span>,
+  },
+  {
+    accessorKey: 'net_pnl',
+    header: 'Net P&L',
+    cell: ({ row }) => {
+      const v = row.original.net_pnl
+      return (
+        <span className={`text-right tabular-nums text-xs font-medium block ${pnlColor(v)}`}>
+          {v != null ? `₹${v.toLocaleString('en-IN', { maximumFractionDigits: 0 })}` : '-'}
+        </span>
+      )
+    },
+    meta: { align: 'right' },
+  },
+  {
+    id: 'pnl_pct',
+    accessorFn: (row) => pnlPct(row),
+    header: 'P&L %',
+    cell: ({ row }) => {
+      const v = pnlPct(row.original)
+      return (
+        <span className={`text-right tabular-nums text-xs font-medium block ${pnlColor(v)}`}>
+          {v != null ? `${v.toFixed(2)}%` : '-'}
+        </span>
+      )
+    },
+    meta: { align: 'right' },
+  },
+  {
+    accessorKey: 'xirr_pct',
+    header: 'XIRR %',
+    cell: ({ getValue }) => {
+      const v = getValue<number | null>()
+      return (
+        <span className={`text-right tabular-nums text-xs block ${pnlColor(v)}`}>
+          {v != null ? `${v.toFixed(1)}%` : '-'}
+        </span>
+      )
+    },
+    meta: { align: 'right' },
+  },
+  {
+    accessorKey: 'return_on_margin_pct',
+    header: 'RoM %',
+    cell: ({ getValue }) => {
+      const v = getValue<number | null>()
+      return (
+        <span className={`text-right tabular-nums text-xs font-medium block ${pnlColor(v)}`}>
+          {v != null ? `${v.toFixed(1)}%` : '-'}
+        </span>
+      )
+    },
+    meta: { align: 'right' },
+  },
+  {
+    accessorKey: 'fees_total',
+    header: 'Fees',
+    cell: ({ getValue }) => {
+      const v = getValue<number | null>()
+      return (
+        <span className="text-right tabular-nums text-xs block">
+          {v != null ? `₹${v.toLocaleString('en-IN', { maximumFractionDigits: 0 })}` : '-'}
+        </span>
+      )
+    },
+    meta: { align: 'right' },
+  },
+  {
+    accessorKey: 'status',
+    header: 'Status',
+    cell: ({ getValue }) => {
+      const s = getValue<string>()
+      return (
+        <span
+          className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-medium ${
+            s === 'success' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'
+          }`}
+        >
+          {s}
+        </span>
+      )
+    },
+    enableSorting: false,
+  },
+]
+
+/* ---------------------------------------------------------------------------
+ * BacktestHistory component
+ * ------------------------------------------------------------------------ */
+
 function BacktestHistory() {
   const navigate = useNavigate()
   const setResult = useBacktestStore((s) => s.setResult)
   const [loadingId, setLoadingId] = useState<number | null>(null)
+  const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }])
+  const [globalFilter, setGlobalFilter] = useState('')
 
   const { data: runs = [], isLoading } = useQuery({
     queryKey: ['backtest', 'history'],
@@ -255,105 +530,134 @@ function BacktestHistory() {
     refetchOnWindowFocus: true,
   })
 
-  const handleRowClick = async (run: BacktestRunSummary) => {
-    if (run.status !== 'success') return
-    setLoadingId(run.id)
-    try {
-      const detail = await getBacktestDetail(run.id)
-      if (detail.status === 'success' || detail.equity?.length) {
-        setResult(detail, {
-          source: (run.source as BacktestSource) || 'demo',
-          symbol: run.symbol,
-          exchange: run.exchange,
-          interval: run.interval,
-          start: run.start_date || '',
-          end: run.end_date || '',
-          capital: run.capital,
-          cost: run.cost_model,
-        })
-        navigate('/backtest/results')
-      } else {
-        showToast.error('Could not load backtest details')
+  const handleRowClick = useCallback(
+    async (run: BacktestRunSummary) => {
+      if (run.status !== 'success') return
+      setLoadingId(run.id)
+      try {
+        const detail = await getBacktestDetail(run.id)
+        if (detail.status === 'success' || detail.equity?.length) {
+          setResult(detail, {
+            source: (run.source as BacktestSource) || 'demo',
+            symbol: run.symbol,
+            exchange: run.exchange,
+            interval: run.interval,
+            start: run.start_date || '',
+            end: run.end_date || '',
+            capital: run.capital,
+            cost: run.cost_model,
+          })
+          navigate('/backtest/results')
+        } else {
+          showToast.error('Could not load backtest details')
+        }
+      } catch {
+        showToast.error('Failed to load backtest run')
+      } finally {
+        setLoadingId(null)
       }
-    } catch {
-      showToast.error('Failed to load backtest run')
-    } finally {
-      setLoadingId(null)
-    }
-  }
+    },
+    [navigate, setResult],
+  )
+
+  const table = useReactTable({
+    data: runs,
+    columns,
+    state: { sorting, globalFilter },
+    onSortingChange: setSorting,
+    onGlobalFilterChange: setGlobalFilter,
+    globalFilterFn: (row, _columnId, filterValue: string) => {
+      const strategy = row.original.strategy?.toLowerCase() ?? ''
+      return strategy.includes(filterValue.toLowerCase())
+    },
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+  })
+
+  const visibleRows = useMemo(
+    () => table.getRowModel().rows.map((r) => r.original),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [table.getRowModel().rows],
+  )
+
+  const handleDownloadCsv = useCallback(() => downloadCsv(visibleRows), [visibleRows])
 
   if (isLoading) return <p className="text-sm text-muted-foreground">Loading history...</p>
-  if (runs.length === 0) return <p className="text-sm text-muted-foreground">No backtests run yet. Run one above to see it here.</p>
+  if (runs.length === 0)
+    return (
+      <p className="text-sm text-muted-foreground">
+        No backtests run yet. Run one above to see it here.
+      </p>
+    )
 
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-base">Backtest History</CardTitle>
+        <div className="flex items-center justify-between gap-3">
+          <CardTitle className="text-base">Backtest History</CardTitle>
+          <div className="flex items-center gap-2">
+            <Input
+              placeholder="Filter strategy..."
+              value={globalFilter}
+              onChange={(e) => setGlobalFilter(e.target.value)}
+              className="h-8 w-48 text-xs"
+            />
+            <Button variant="outline" size="sm" className="h-8 text-xs" onClick={handleDownloadCsv}>
+              Download CSV
+            </Button>
+          </div>
+        </div>
       </CardHeader>
       <CardContent>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b text-left text-xs text-muted-foreground">
-                <th className="pb-2 pr-3">Time</th>
-                <th className="pb-2 pr-3">Strategy</th>
-                <th className="pb-2 pr-3">Instrument</th>
-                <th className="pb-2 pr-3">Period</th>
-                <th className="pb-2 pr-3">Freq</th>
-                <th className="pb-2 pr-3">Source</th>
-                <th className="pb-2 pr-3 text-right">Capital</th>
-                <th className="pb-2 pr-3">Trades</th>
-                <th className="pb-2 pr-3 text-right">Net P&L</th>
-                <th className="pb-2 pr-3 text-right">P&L %</th>
-                <th className="pb-2 pr-3 text-right">XIRR %</th>
-                <th className="pb-2 pr-3 text-right">Margin RoM%</th>
-                <th className="pb-2 pr-3 text-right">Fees</th>
-                <th className="pb-2">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {runs.map((r: BacktestRunSummary) => (
-                <tr
-                  key={r.id}
-                  className={`border-b border-border/50 last:border-0 ${r.status === 'success' ? 'cursor-pointer hover:bg-accent/50 transition-colors' : 'opacity-60'}`}
-                  onClick={() => handleRowClick(r)}
-                >
-                  <td className="py-2 pr-3 text-xs text-muted-foreground whitespace-nowrap">
-                    {loadingId === r.id ? '...' : r.created_at ? new Date(r.created_at + 'Z').toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit', hour12: true }) : '-'}
-                  </td>
-                  <td className="py-2 pr-3 max-w-[140px] truncate" title={r.strategy_description || r.strategy}>
-                    <span className="font-medium text-xs">{r.strategy}</span>
-                  </td>
-                  <td className="py-2 pr-3 font-medium text-xs whitespace-nowrap">{r.symbol}<span className="text-muted-foreground">/{r.exchange}</span></td>
-                  <td className="py-2 pr-3 text-xs text-muted-foreground whitespace-nowrap">
-                    {r.start_date || '—'} → {r.end_date || '—'}
-                  </td>
-                  <td className="py-2 pr-3 text-xs">{r.interval}</td>
-                  <td className="py-2 pr-3 text-xs">{r.source === 'db' ? 'AngelOne' : r.source === 'demo' ? 'Synthetic' : r.source}</td>
-                  <td className="py-2 pr-3 text-right tabular-nums text-xs">₹{r.capital?.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</td>
-                  <td className="py-2 pr-3 tabular-nums text-xs">{r.n_trades}</td>
-                  <td className={`py-2 pr-3 text-right tabular-nums text-xs font-medium ${(r.net_pnl ?? 0) >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-                    {r.net_pnl != null ? `₹${r.net_pnl.toLocaleString('en-IN', { maximumFractionDigits: 0 })}` : '-'}
-                  </td>
-                  <td className={`py-2 pr-3 text-right tabular-nums text-xs font-medium ${(r.net_pnl ?? 0) >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-                    {r.capital && r.net_pnl != null ? `${((r.net_pnl / r.capital) * 100).toFixed(2)}%` : '-'}
-                  </td>
-                  <td className={`py-2 pr-3 text-right tabular-nums text-xs ${(r.xirr_pct ?? 0) >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-                    {r.xirr_pct != null ? `${r.xirr_pct.toFixed(1)}%` : '-'}
-                  </td>
-                  <td className={`py-2 pr-3 text-right tabular-nums text-xs font-medium ${(r.return_on_margin_pct ?? 0) >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-                    {r.return_on_margin_pct != null ? `${r.return_on_margin_pct.toFixed(1)}%` : '-'}
-                  </td>
-                  <td className="py-2 pr-3 text-right tabular-nums text-xs">
-                    {r.fees_total != null ? `₹${r.fees_total.toLocaleString('en-IN', { maximumFractionDigits: 0 })}` : '-'}
-                  </td>
-                  <td className="py-2">
-                    <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-medium ${r.status === 'success' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'}`}>
-                      {r.status}
-                    </span>
-                  </td>
+              {table.getHeaderGroups().map((headerGroup) => (
+                <tr key={headerGroup.id} className="border-b text-left text-xs text-muted-foreground">
+                  {headerGroup.headers.map((header) => {
+                    const canSort = header.column.getCanSort()
+                    const align =
+                      (header.column.columnDef.meta as { align?: string } | undefined)?.align === 'right'
+                        ? 'text-right'
+                        : 'text-left'
+                    return (
+                      <th
+                        key={header.id}
+                        className={`pb-2 pr-3 ${align} ${canSort ? 'cursor-pointer select-none' : ''}`}
+                        onClick={canSort ? header.column.getToggleSortingHandler() : undefined}
+                      >
+                        {flexRender(header.column.columnDef.header, header.getContext())}
+                        {canSort && <SortIndicator direction={header.column.getIsSorted()} />}
+                      </th>
+                    )
+                  })}
                 </tr>
               ))}
+            </thead>
+            <tbody>
+              {table.getRowModel().rows.map((row) => {
+                const r = row.original
+                return (
+                  <tr
+                    key={row.id}
+                    className={`border-b border-border/50 last:border-0 ${
+                      r.status === 'success'
+                        ? 'cursor-pointer hover:bg-accent/50 transition-colors'
+                        : 'opacity-60'
+                    }`}
+                    onClick={() => handleRowClick(r)}
+                  >
+                    {row.getVisibleCells().map((cell) => (
+                      <td key={cell.id} className="py-2 pr-3">
+                        {loadingId === r.id && cell.column.id === 'created_at'
+                          ? '...'
+                          : flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </td>
+                    ))}
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>

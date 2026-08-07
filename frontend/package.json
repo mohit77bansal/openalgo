@@ -43,6 +43,7 @@
     "@radix-ui/react-tooltip": "^1.2.8",
     "@tanstack/react-query": "^5.90.20",
     "@tanstack/react-query-devtools": "^5.91.2",
+    "@tanstack/react-table": "^8.21.3",
     "@types/plotly.js": "^3.0.9",
     "@types/react-syntax-highlighter": "^15.5.13",
     "@uiw/codemirror-themes": "^4.25.4",
