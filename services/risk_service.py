@@ -36,7 +36,7 @@ class _RiskLimits:
 
     max_daily_loss: float = 50_000.0
     max_open_positions: int = 5
-    max_order_value: float = 500_000.0
+    max_order_value: float = 2_500_000.0
     max_quantity_per_order: int = 300
     cutoff_time: time = time(15, 15)
     kill_switch: bool = False
