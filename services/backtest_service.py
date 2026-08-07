@@ -30,7 +30,7 @@ from utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-DEMO_COST_MODELS = ("zerodha", "upstox", "fyers", "zero")
+DEMO_COST_MODELS = ("zerodha", "angelone", "upstox", "fyers", "zero")
 DEFAULT_CAPITAL = 1_000_000.0
 DEFAULT_SYMBOL = "NIFTY"
 
@@ -178,120 +178,381 @@ def _register(key: str, name: str, description: str, factory):
 def _init_strategies():
     from qbacktest.engine.strategy import Strategy
 
-    class SMAMomentum(Strategy):
-        """Buy when close > SMA(window), sell when below."""
-        name = "SMA Momentum"
+    def _lot(inst) -> int:
+        return max(getattr(inst, "lot_size", 1) or 1, 1)
 
-        def __init__(self, symbol: str, window: int = 10):
-            self._symbol = symbol
-            self._window = window
+    def _atr(highs: list, lows: list, closes: list, period: int) -> float | None:
+        """Average True Range over the last `period` bars."""
+        if len(closes) < period + 1:
+            return None
+        trs = []
+        for i in range(-period, 0):
+            tr = max(highs[i] - lows[i], abs(highs[i] - closes[i - 1]), abs(lows[i] - closes[i - 1]))
+            trs.append(tr)
+        return sum(trs) / period
+
+    # ------------------------------------------------------------------
+    # 1. ATR Channel Breakout (Turtle-style, 2:1 R:R via ATR trailing)
+    # ------------------------------------------------------------------
+    class ATRChannelBreakout(Strategy):
+        name = "ATR Channel Breakout"
+
+        def __init__(self, sym: str, lookback: int = 20, atr_period: int = 14, atr_sl_mult: float = 1.5, atr_tp_mult: float = 3.0):
+            self._sym = sym
+            self._lookback = lookback
+            self._atr_period = atr_period
+            self._sl_mult = atr_sl_mult
+            self._tp_mult = atr_tp_mult
 
         def on_start(self, ctx):
+            self._highs: list[float] = []
+            self._lows: list[float] = []
             self._closes: list[float] = []
             self._long = False
+            self._short = False
+            self._entry = 0.0
+            self._sl = 0.0
+            self._tp = 0.0
 
         def on_bar(self, ctx, bar):
-            if bar.instrument.symbol != self._symbol:
+            if bar.instrument.symbol != self._sym:
                 return
+            self._highs.append(bar.high)
+            self._lows.append(bar.low)
             self._closes.append(bar.close)
-            if len(self._closes) <= self._window:
+            if len(self._closes) < max(self._lookback, self._atr_period + 1):
                 return
-            sma = sum(self._closes[-self._window:]) / self._window
+
+            atr = _atr(self._highs, self._lows, self._closes, self._atr_period)
+            if not atr or atr == 0:
+                return
             inst = bar.instrument
-            qty = max(getattr(inst, "lot_size", 1) or 1, 1)
-            if bar.close > sma and not self._long:
+            qty = _lot(inst)
+            ch_high = max(self._highs[-self._lookback - 1:-1])
+            ch_low = min(self._lows[-self._lookback - 1:-1])
+
+            if self._long:
+                if bar.close <= self._sl or bar.close >= self._tp:
+                    ctx.sell(inst, quantity=qty)
+                    self._long = False
+                return
+            if self._short:
+                if bar.close >= self._sl or bar.close <= self._tp:
+                    ctx.buy(inst, quantity=qty)
+                    self._short = False
+                return
+
+            if bar.close > ch_high:
                 ctx.buy(inst, quantity=qty)
                 self._long = True
-            elif bar.close < sma and self._long:
+                self._entry = bar.close
+                self._sl = bar.close - atr * self._sl_mult
+                self._tp = bar.close + atr * self._tp_mult
+            elif bar.close < ch_low:
                 ctx.sell(inst, quantity=qty)
-                self._long = False
+                self._short = True
+                self._entry = bar.close
+                self._sl = bar.close + atr * self._sl_mult
+                self._tp = bar.close - atr * self._tp_mult
 
-    class RSIMeanReversion(Strategy):
-        """Buy when RSI(14) < 30 (oversold), sell when RSI > 70 (overbought)."""
-        name = "RSI Mean Reversion"
+    # ------------------------------------------------------------------
+    # 2. Bollinger Band Squeeze Breakout (volatility contraction -> expansion)
+    # ------------------------------------------------------------------
+    class BollingerSqueezeBreakout(Strategy):
+        name = "Bollinger Squeeze Breakout"
 
-        def __init__(self, symbol: str, period: int = 14, oversold: float = 30, overbought: float = 70):
-            self._symbol = symbol
+        def __init__(self, sym: str, period: int = 20, std_mult: float = 2.0, squeeze_pct: float = 0.03):
+            self._sym = sym
             self._period = period
-            self._oversold = oversold
-            self._overbought = overbought
+            self._std_mult = std_mult
+            self._squeeze_pct = squeeze_pct
 
         def on_start(self, ctx):
             self._closes: list[float] = []
+            self._highs: list[float] = []
+            self._lows: list[float] = []
             self._long = False
+            self._short = False
+            self._entry = 0.0
+            self._sl = 0.0
+            self._was_squeezed = False
 
-        def _rsi(self) -> float | None:
-            if len(self._closes) < self._period + 1:
+        def on_bar(self, ctx, bar):
+            if bar.instrument.symbol != self._sym:
+                return
+            self._closes.append(bar.close)
+            self._highs.append(bar.high)
+            self._lows.append(bar.low)
+            if len(self._closes) < self._period:
+                return
+
+            window = self._closes[-self._period:]
+            sma = sum(window) / self._period
+            std = (sum((x - sma) ** 2 for x in window) / self._period) ** 0.5
+            upper = sma + self._std_mult * std
+            lower = sma - self._std_mult * std
+            bandwidth = (upper - lower) / sma if sma else 0
+
+            is_squeezed = bandwidth < self._squeeze_pct
+            atr = _atr(self._highs, self._lows, self._closes, min(14, self._period))
+            inst = bar.instrument
+            qty = _lot(inst)
+
+            if self._long:
+                if atr and bar.close < self._entry - 2 * atr:
+                    ctx.sell(inst, quantity=qty)
+                    self._long = False
+                elif bar.close > upper and atr:
+                    self._sl = max(self._sl, bar.close - 1.5 * atr)
+                return
+            if self._short:
+                if atr and bar.close > self._entry + 2 * atr:
+                    ctx.buy(inst, quantity=qty)
+                    self._short = False
+                return
+
+            if self._was_squeezed and not is_squeezed:
+                if bar.close > upper:
+                    ctx.buy(inst, quantity=qty)
+                    self._long = True
+                    self._entry = bar.close
+                    self._sl = lower
+                elif bar.close < lower:
+                    ctx.sell(inst, quantity=qty)
+                    self._short = True
+                    self._entry = bar.close
+                    self._sl = upper
+
+            self._was_squeezed = is_squeezed
+
+    # ------------------------------------------------------------------
+    # 3. Gap Fade with Defined Risk (exploits NIFTY overnight gap filling)
+    # ------------------------------------------------------------------
+    class GapFade(Strategy):
+        name = "Gap Fade"
+
+        def __init__(self, sym: str, min_gap_pct: float = 0.004, sl_mult: float = 1.0, tp_mult: float = 2.0):
+            self._sym = sym
+            self._min_gap = min_gap_pct
+            self._sl_mult = sl_mult
+            self._tp_mult = tp_mult
+
+        def on_start(self, ctx):
+            self._prev_close: float | None = None
+            self._long = False
+            self._short = False
+            self._entry = 0.0
+            self._sl = 0.0
+            self._tp = 0.0
+            self._closes: list[float] = []
+            self._highs: list[float] = []
+            self._lows: list[float] = []
+
+        def on_bar(self, ctx, bar):
+            if bar.instrument.symbol != self._sym:
+                return
+            self._closes.append(bar.close)
+            self._highs.append(bar.high)
+            self._lows.append(bar.low)
+            inst = bar.instrument
+            qty = _lot(inst)
+
+            if self._long:
+                if bar.close <= self._sl:
+                    ctx.sell(inst, quantity=qty)
+                    self._long = False
+                elif bar.close >= self._tp:
+                    ctx.sell(inst, quantity=qty)
+                    self._long = False
+                self._prev_close = bar.close
+                return
+            if self._short:
+                if bar.close >= self._sl:
+                    ctx.buy(inst, quantity=qty)
+                    self._short = False
+                elif bar.close <= self._tp:
+                    ctx.buy(inst, quantity=qty)
+                    self._short = False
+                self._prev_close = bar.close
+                return
+
+            if self._prev_close is not None:
+                gap_pct = (bar.open - self._prev_close) / self._prev_close
+                gap_size = abs(bar.open - self._prev_close)
+                risk = gap_size * self._sl_mult
+
+                if gap_pct > self._min_gap:
+                    ctx.sell(inst, quantity=qty)
+                    self._short = True
+                    self._entry = bar.open
+                    self._sl = bar.open + risk
+                    self._tp = bar.open - risk * self._tp_mult
+                elif gap_pct < -self._min_gap:
+                    ctx.buy(inst, quantity=qty)
+                    self._long = True
+                    self._entry = bar.open
+                    self._sl = bar.open - risk
+                    self._tp = bar.open + risk * self._tp_mult
+
+            self._prev_close = bar.close
+
+    # ------------------------------------------------------------------
+    # 4. Inside Bar Breakout (price compression -> directional move)
+    # ------------------------------------------------------------------
+    class InsideBarBreakout(Strategy):
+        name = "Inside Bar Breakout"
+
+        def __init__(self, sym: str, atr_period: int = 14, sl_mult: float = 0.5, tp_mult: float = 2.0):
+            self._sym = sym
+            self._atr_period = atr_period
+            self._sl_mult = sl_mult
+            self._tp_mult = tp_mult
+
+        def on_start(self, ctx):
+            self._highs: list[float] = []
+            self._lows: list[float] = []
+            self._closes: list[float] = []
+            self._long = False
+            self._short = False
+            self._sl = 0.0
+            self._tp = 0.0
+
+        def on_bar(self, ctx, bar):
+            if bar.instrument.symbol != self._sym:
+                return
+            self._highs.append(bar.high)
+            self._lows.append(bar.low)
+            self._closes.append(bar.close)
+            if len(self._highs) < 2:
+                return
+
+            inst = bar.instrument
+            qty = _lot(inst)
+            atr = _atr(self._highs, self._lows, self._closes, self._atr_period) if len(self._closes) > self._atr_period else None
+
+            if self._long:
+                if bar.close <= self._sl or bar.close >= self._tp:
+                    ctx.sell(inst, quantity=qty)
+                    self._long = False
+                return
+            if self._short:
+                if bar.close >= self._sl or bar.close <= self._tp:
+                    ctx.buy(inst, quantity=qty)
+                    self._short = False
+                return
+
+            prev_h, prev_l = self._highs[-2], self._lows[-2]
+            is_inside = bar.high <= prev_h and bar.low >= prev_l
+            if not is_inside or not atr:
+                return
+
+            if bar.close > (prev_h + prev_l) / 2:
+                ctx.buy(inst, quantity=qty)
+                self._long = True
+                self._sl = bar.close - atr * self._sl_mult
+                self._tp = bar.close + atr * self._tp_mult
+            else:
+                ctx.sell(inst, quantity=qty)
+                self._short = True
+                self._sl = bar.close + atr * self._sl_mult
+                self._tp = bar.close - atr * self._tp_mult
+
+    # ------------------------------------------------------------------
+    # 5. Mean Reversion Extreme (RSI + Bollinger + volume confirmation)
+    # ------------------------------------------------------------------
+    class MeanReversionExtreme(Strategy):
+        name = "Mean Reversion Extreme"
+
+        def __init__(self, sym: str, bb_period: int = 20, rsi_period: int = 7, rsi_oversold: float = 25, rsi_overbought: float = 75):
+            self._sym = sym
+            self._bb_period = bb_period
+            self._rsi_period = rsi_period
+            self._rsi_os = rsi_oversold
+            self._rsi_ob = rsi_overbought
+
+        def on_start(self, ctx):
+            self._closes: list[float] = []
+            self._volumes: list[float] = []
+            self._highs: list[float] = []
+            self._lows: list[float] = []
+            self._long = False
+            self._short = False
+            self._entry = 0.0
+
+        def _rsi(self, period: int) -> float | None:
+            if len(self._closes) < period + 1:
                 return None
             gains, losses = [], []
-            for i in range(-self._period, 0):
-                delta = self._closes[i] - self._closes[i - 1]
-                gains.append(max(delta, 0))
-                losses.append(max(-delta, 0))
-            avg_gain = sum(gains) / self._period
-            avg_loss = sum(losses) / self._period
-            if avg_loss == 0:
-                return 100.0
-            rs = avg_gain / avg_loss
-            return 100 - (100 / (1 + rs))
+            for i in range(-period, 0):
+                d = self._closes[i] - self._closes[i - 1]
+                gains.append(max(d, 0))
+                losses.append(max(-d, 0))
+            ag = sum(gains) / period
+            al = sum(losses) / period
+            return 100 - (100 / (1 + ag / al)) if al else 100.0
 
         def on_bar(self, ctx, bar):
-            if bar.instrument.symbol != self._symbol:
+            if bar.instrument.symbol != self._sym:
                 return
             self._closes.append(bar.close)
-            rsi = self._rsi()
-            if rsi is None:
+            self._volumes.append(bar.volume)
+            self._highs.append(bar.high)
+            self._lows.append(bar.low)
+            if len(self._closes) < self._bb_period:
                 return
+
+            window = self._closes[-self._bb_period:]
+            sma = sum(window) / self._bb_period
+            std = (sum((x - sma) ** 2 for x in window) / self._bb_period) ** 0.5
+            lower_bb = sma - 2 * std
+            upper_bb = sma + 2 * std
+            rsi = self._rsi(self._rsi_period)
+            atr = _atr(self._highs, self._lows, self._closes, 14)
+            vol_avg = sum(self._volumes[-20:]) / min(len(self._volumes), 20) if self._volumes else 0
+            high_volume = bar.volume > 1.2 * vol_avg if vol_avg > 0 else True
             inst = bar.instrument
-            qty = max(getattr(inst, "lot_size", 1) or 1, 1)
-            if rsi < self._oversold and not self._long:
+            qty = _lot(inst)
+
+            if self._long:
+                if bar.close >= sma or (atr and bar.close < self._entry - 1.5 * atr):
+                    ctx.sell(inst, quantity=qty)
+                    self._long = False
+                return
+            if self._short:
+                if bar.close <= sma or (atr and bar.close > self._entry + 1.5 * atr):
+                    ctx.buy(inst, quantity=qty)
+                    self._short = False
+                return
+
+            if rsi is not None and bar.close <= lower_bb and rsi < self._rsi_os and high_volume:
                 ctx.buy(inst, quantity=qty)
                 self._long = True
-            elif rsi > self._overbought and self._long:
+                self._entry = bar.close
+            elif rsi is not None and bar.close >= upper_bb and rsi > self._rsi_ob and high_volume:
                 ctx.sell(inst, quantity=qty)
-                self._long = False
+                self._short = True
+                self._entry = bar.close
 
-    class DualSMACrossover(Strategy):
-        """Buy when fast SMA crosses above slow SMA, sell on cross below."""
-        name = "Dual SMA Crossover"
+    # --- Register all ---
+    _register("atr_channel_breakout", "ATR Channel Breakout",
+              "Turtle-style: buy on 20-day high breakout, sell on 20-day low. SL at 1.5×ATR, TP at 3×ATR = structural 2:1 R:R. Catches big trends, gives back on chop.",
+              lambda sym, **kw: ATRChannelBreakout(sym, lookback=kw.get("lookback", 20)))
 
-        def __init__(self, symbol: str, fast: int = 5, slow: int = 20):
-            self._symbol = symbol
-            self._fast = fast
-            self._slow = slow
+    _register("bollinger_squeeze", "Bollinger Squeeze Breakout",
+              "Enters when Bollinger Bands squeeze (bandwidth < 3%) then expand — breakout above upper band = long, below lower = short. Volatility compression precedes big moves.",
+              lambda sym, **kw: BollingerSqueezeBreakout(sym, period=kw.get("period", 20)))
 
-        def on_start(self, ctx):
-            self._closes: list[float] = []
-            self._long = False
+    _register("gap_fade", "Gap Fade (2:1 R:R)",
+              "Fades overnight gaps > 0.4% expecting mean reversion. SL = 1× gap size, TP = 2× gap size = hard 2:1 R:R. NIFTY fills ~65% of gaps within the day. Needs ~34% win rate to profit.",
+              lambda sym, **kw: GapFade(sym, min_gap_pct=kw.get("min_gap_pct", 0.004)))
 
-        def on_bar(self, ctx, bar):
-            if bar.instrument.symbol != self._symbol:
-                return
-            self._closes.append(bar.close)
-            if len(self._closes) < self._slow:
-                return
-            fast_sma = sum(self._closes[-self._fast:]) / self._fast
-            slow_sma = sum(self._closes[-self._slow:]) / self._slow
-            inst = bar.instrument
-            qty = max(getattr(inst, "lot_size", 1) or 1, 1)
-            if fast_sma > slow_sma and not self._long:
-                ctx.buy(inst, quantity=qty)
-                self._long = True
-            elif fast_sma < slow_sma and self._long:
-                ctx.sell(inst, quantity=qty)
-                self._long = False
+    _register("inside_bar_breakout", "Inside Bar Breakout",
+              "Detects inside bars (today's range inside yesterday's). Trades the breakout direction with ATR-based SL (0.5×ATR) and TP (2×ATR) = 4:1 R:R. Low frequency, high selectivity.",
+              lambda sym, **kw: InsideBarBreakout(sym))
 
-    _register("sma_momentum", "SMA Momentum",
-              "Long when close > SMA(10), flat when below. Trend-following. Needs ~40% win rate at 1.5:1 R:R.",
-              lambda sym, **kw: SMAMomentum(sym, window=kw.get("window", 10)))
-
-    _register("rsi_mean_reversion", "RSI Mean Reversion",
-              "Buy when RSI(14) < 30 (oversold), sell when RSI > 70 (overbought). Counter-trend. Best in ranging markets.",
-              lambda sym, **kw: RSIMeanReversion(sym, period=kw.get("period", 14)))
-
-    _register("dual_sma_crossover", "Dual SMA Crossover",
-              "Buy when SMA(5) crosses above SMA(20), sell on cross below. Classic golden/death cross signal.",
-              lambda sym, **kw: DualSMACrossover(sym, fast=kw.get("fast", 5), slow=kw.get("slow", 20)))
+    _register("mean_reversion_extreme", "Mean Reversion Extreme",
+              "Multi-signal confirmation: enters ONLY when price hits 2σ Bollinger Band + RSI(7) extreme (<25 or >75) + above-average volume. Exits at the mean (SMA). High conviction, low frequency.",
+              lambda sym, **kw: MeanReversionExtreme(sym))
 
 
 _init_strategies()
@@ -305,10 +566,10 @@ def list_strategies() -> list[dict[str, str]]:
     ]
 
 
-def _make_strategy(symbol: str, strategy_key: str = "sma_momentum", **kwargs) -> Any:
+def _make_strategy(symbol: str, strategy_key: str = "atr_channel_breakout", **kwargs) -> Any:
     entry = STRATEGY_REGISTRY.get(strategy_key)
     if not entry:
-        entry = STRATEGY_REGISTRY["sma_momentum"]
+        entry = STRATEGY_REGISTRY["atr_channel_breakout"]
     return entry["factory"](symbol, **kwargs)
 
 
@@ -316,15 +577,16 @@ def _make_strategy(symbol: str, strategy_key: str = "sma_momentum", **kwargs) ->
 # Engine invocation (the one seam to offload to a worker in production)
 # --------------------------------------------------------------------------- #
 def _run_engine(source_obj: Any, symbol: str, capital: float, cost: str,
-                strategy_key: str = "sma_momentum", **strategy_kwargs) -> Any:
+                strategy_key: str = "atr_channel_breakout", **strategy_kwargs) -> Any:
     from qbacktest.costs.costs import DEFAULT_COST_MODELS
     from qbacktest.engine.engine import BacktestEngine
 
+    cost_key = "zerodha" if cost == "angelone" else cost
     engine = BacktestEngine(
         strategy=_make_strategy(symbol, strategy_key, **strategy_kwargs),
         data=source_obj,
         starting_capital=capital,
-        cost_model=DEFAULT_COST_MODELS[cost],
+        cost_model=DEFAULT_COST_MODELS[cost_key],
     )
     return engine.run()
 

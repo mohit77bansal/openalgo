@@ -107,6 +107,68 @@ export default function BacktestResults() {
           />
         </CardContent>
       </Card>
+
+      {result.strategy_description && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Strategy Logic</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">{result.strategy_description}</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {result.trades && result.trades.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Trades ({result.trades.length})</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b text-left text-muted-foreground">
+                    <th className="pb-2 pr-3">#</th>
+                    <th className="pb-2 pr-3">Instrument</th>
+                    <th className="pb-2 pr-3">Side</th>
+                    <th className="pb-2 pr-3">Entry Time</th>
+                    <th className="pb-2 pr-3 text-right">Entry Price</th>
+                    <th className="pb-2 pr-3">Exit Time</th>
+                    <th className="pb-2 pr-3 text-right">Exit Price</th>
+                    <th className="pb-2 pr-3 text-right">Qty</th>
+                    <th className="pb-2 pr-3 text-right">P&L</th>
+                    <th className="pb-2 text-right">Fees</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.trades.map((t: Record<string, unknown>, i: number) => {
+                    const pnl = Number(t.pnl ?? t.realized_pnl ?? 0)
+                    return (
+                      <tr key={i} className="border-b border-border/50 last:border-0">
+                        <td className="py-1.5 pr-3 text-muted-foreground">{i + 1}</td>
+                        <td className="py-1.5 pr-3 font-medium">{String(t.instrument_id ?? t.instrument ?? t.symbol ?? '-')}</td>
+                        <td className={cn('py-1.5 pr-3 font-medium', String(t.side ?? '').includes('BUY') || String(t.direction ?? '') === 'LONG' ? 'text-emerald-500' : 'text-rose-500')}>
+                          {String(t.side ?? t.direction ?? '-')}
+                        </td>
+                        <td className="py-1.5 pr-3 text-muted-foreground whitespace-nowrap">{String(t.entry_time ?? t.entry_ts ?? '-').slice(0, 19)}</td>
+                        <td className="py-1.5 pr-3 text-right tabular-nums">{Number(t.entry_price ?? 0).toFixed(2)}</td>
+                        <td className="py-1.5 pr-3 text-muted-foreground whitespace-nowrap">{String(t.exit_time ?? t.exit_ts ?? '-').slice(0, 19)}</td>
+                        <td className="py-1.5 pr-3 text-right tabular-nums">{Number(t.exit_price ?? 0).toFixed(2)}</td>
+                        <td className="py-1.5 pr-3 text-right tabular-nums">{String(t.quantity ?? t.qty ?? '-')}</td>
+                        <td className={cn('py-1.5 pr-3 text-right tabular-nums font-medium', pnl >= 0 ? 'text-emerald-500' : 'text-rose-500')}>
+                          {money(pnl)}
+                        </td>
+                        <td className="py-1.5 text-right tabular-nums">{money(Number(t.fees ?? t.total_fees ?? 0))}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   )
 }

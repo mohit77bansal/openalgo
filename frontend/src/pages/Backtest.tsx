@@ -33,6 +33,7 @@ const INTERVALS: { value: string; label: string }[] = [
 
 const COSTS: { value: string; label: string }[] = [
   { value: 'zerodha', label: 'Zerodha' },
+  { value: 'angelone', label: 'AngelOne' },
   { value: 'upstox', label: 'Upstox' },
   { value: 'fyers', label: 'Fyers' },
   { value: 'zero', label: 'Zero (no costs)' },
@@ -294,15 +295,17 @@ function BacktestHistory() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b text-left text-xs text-muted-foreground">
-                <th className="pb-2 pr-4">Time</th>
-                <th className="pb-2 pr-4">Strategy</th>
-                <th className="pb-2 pr-4">Symbol</th>
-                <th className="pb-2 pr-4">Source</th>
-                <th className="pb-2 pr-4">Bars</th>
-                <th className="pb-2 pr-4">Trades</th>
-                <th className="pb-2 pr-4 text-right">Net P&L</th>
-                <th className="pb-2 pr-4 text-right">Fees</th>
-                <th className="pb-2 pr-4">Cost</th>
+                <th className="pb-2 pr-3">Time</th>
+                <th className="pb-2 pr-3">Strategy</th>
+                <th className="pb-2 pr-3">Instrument</th>
+                <th className="pb-2 pr-3">Period</th>
+                <th className="pb-2 pr-3">Freq</th>
+                <th className="pb-2 pr-3">Source</th>
+                <th className="pb-2 pr-3 text-right">Capital</th>
+                <th className="pb-2 pr-3">Trades</th>
+                <th className="pb-2 pr-3 text-right">Net P&L</th>
+                <th className="pb-2 pr-3 text-right">P&L %</th>
+                <th className="pb-2 pr-3 text-right">Fees</th>
                 <th className="pb-2">Status</th>
               </tr>
             </thead>
@@ -313,25 +316,31 @@ function BacktestHistory() {
                   className={`border-b border-border/50 last:border-0 ${r.status === 'success' ? 'cursor-pointer hover:bg-accent/50 transition-colors' : 'opacity-60'}`}
                   onClick={() => handleRowClick(r)}
                 >
-                  <td className="py-2 pr-4 text-xs text-muted-foreground whitespace-nowrap">
+                  <td className="py-2 pr-3 text-xs text-muted-foreground whitespace-nowrap">
                     {loadingId === r.id ? '...' : r.created_at ? new Date(r.created_at).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '-'}
                   </td>
-                  <td className="py-2 pr-4" title={r.strategy_description || ''}>
-                    <span className="font-medium">{r.strategy}</span>
+                  <td className="py-2 pr-3 max-w-[140px] truncate" title={r.strategy_description || r.strategy}>
+                    <span className="font-medium text-xs">{r.strategy}</span>
                   </td>
-                  <td className="py-2 pr-4 font-medium">{r.symbol}/{r.exchange}</td>
-                  <td className="py-2 pr-4">{r.source === 'db' ? 'AngelOne (Live)' : r.source === 'demo' ? 'Synthetic' : r.source}</td>
-                  <td className="py-2 pr-4 tabular-nums">{r.n_bars}</td>
-                  <td className="py-2 pr-4 tabular-nums">{r.n_trades}</td>
-                  <td className={`py-2 pr-4 text-right tabular-nums font-medium ${(r.net_pnl ?? 0) >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                  <td className="py-2 pr-3 font-medium text-xs whitespace-nowrap">{r.symbol}<span className="text-muted-foreground">/{r.exchange}</span></td>
+                  <td className="py-2 pr-3 text-xs text-muted-foreground whitespace-nowrap">
+                    {r.start_date || '—'} → {r.end_date || '—'}
+                  </td>
+                  <td className="py-2 pr-3 text-xs">{r.interval}</td>
+                  <td className="py-2 pr-3 text-xs">{r.source === 'db' ? 'AngelOne' : r.source === 'demo' ? 'Synthetic' : r.source}</td>
+                  <td className="py-2 pr-3 text-right tabular-nums text-xs">₹{r.capital?.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</td>
+                  <td className="py-2 pr-3 tabular-nums text-xs">{r.n_trades}</td>
+                  <td className={`py-2 pr-3 text-right tabular-nums text-xs font-medium ${(r.net_pnl ?? 0) >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
                     {r.net_pnl != null ? `₹${r.net_pnl.toLocaleString('en-IN', { maximumFractionDigits: 0 })}` : '-'}
                   </td>
-                  <td className="py-2 pr-4 text-right tabular-nums">
+                  <td className={`py-2 pr-3 text-right tabular-nums text-xs font-medium ${(r.net_pnl ?? 0) >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                    {r.capital && r.net_pnl != null ? `${((r.net_pnl / r.capital) * 100).toFixed(2)}%` : '-'}
+                  </td>
+                  <td className="py-2 pr-3 text-right tabular-nums text-xs">
                     {r.fees_total != null ? `₹${r.fees_total.toLocaleString('en-IN', { maximumFractionDigits: 0 })}` : '-'}
                   </td>
-                  <td className="py-2 pr-4 text-xs">{r.cost_model}</td>
                   <td className="py-2">
-                    <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${r.status === 'success' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'}`}>
+                    <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-medium ${r.status === 'success' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'}`}>
                       {r.status}
                     </span>
                   </td>
