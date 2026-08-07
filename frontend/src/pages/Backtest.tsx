@@ -8,7 +8,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
-import { type BacktestSource, runBacktest, getBacktestHistory } from '@/api/backtest'
+import { type BacktestSource, runBacktest, getBacktestHistory, getBacktestDetail } from '@/api/backtest'
 import type { BacktestRunSummary } from '@/api/backtest'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -109,8 +109,8 @@ export default function Backtest() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="demo">Demo (synthetic)</SelectItem>
-                  <SelectItem value="db">Historify (local)</SelectItem>
+                  <SelectItem value="demo">Synthetic (no data needed)</SelectItem>
+                  <SelectItem value="db">AngelOne (live data)</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -130,6 +130,7 @@ export default function Backtest() {
                   <SelectItem value="NSE">NSE</SelectItem>
                   <SelectItem value="BSE">BSE</SelectItem>
                   <SelectItem value="NFO">NFO</SelectItem>
+                  <SelectItem value="NSE_INDEX">NSE Index</SelectItem>
                   <SelectItem value="MCX">MCX</SelectItem>
                 </SelectContent>
               </Select>
@@ -207,11 +208,42 @@ export default function Backtest() {
 }
 
 function BacktestHistory() {
+  const navigate = useNavigate()
+  const setResult = useBacktestStore((s) => s.setResult)
+  const [loadingId, setLoadingId] = useState<number | null>(null)
+
   const { data: runs = [], isLoading } = useQuery({
     queryKey: ['backtest', 'history'],
     queryFn: () => getBacktestHistory(50),
     refetchOnWindowFocus: true,
   })
+
+  const handleRowClick = async (run: BacktestRunSummary) => {
+    if (run.status !== 'success') return
+    setLoadingId(run.id)
+    try {
+      const detail = await getBacktestDetail(run.id)
+      if (detail.status === 'success' || detail.equity?.length) {
+        setResult(detail, {
+          source: (run.source as BacktestSource) || 'demo',
+          symbol: run.symbol,
+          exchange: run.exchange,
+          interval: run.interval,
+          start: run.start_date || '',
+          end: run.end_date || '',
+          capital: run.capital,
+          cost: run.cost_model,
+        })
+        navigate('/backtest/results')
+      } else {
+        showToast.error('Could not load backtest details')
+      }
+    } catch {
+      showToast.error('Failed to load backtest run')
+    } finally {
+      setLoadingId(null)
+    }
+  }
 
   if (isLoading) return <p className="text-sm text-muted-foreground">Loading history...</p>
   if (runs.length === 0) return <p className="text-sm text-muted-foreground">No backtests run yet. Run one above to see it here.</p>
@@ -239,12 +271,16 @@ function BacktestHistory() {
             </thead>
             <tbody>
               {runs.map((r: BacktestRunSummary) => (
-                <tr key={r.id} className="border-b border-border/50 last:border-0">
+                <tr
+                  key={r.id}
+                  className={`border-b border-border/50 last:border-0 ${r.status === 'success' ? 'cursor-pointer hover:bg-accent/50 transition-colors' : 'opacity-60'}`}
+                  onClick={() => handleRowClick(r)}
+                >
                   <td className="py-2 pr-4 text-xs text-muted-foreground whitespace-nowrap">
-                    {r.created_at ? new Date(r.created_at).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '-'}
+                    {loadingId === r.id ? '...' : r.created_at ? new Date(r.created_at).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '-'}
                   </td>
                   <td className="py-2 pr-4 font-medium">{r.symbol}/{r.exchange}</td>
-                  <td className="py-2 pr-4">{r.source}</td>
+                  <td className="py-2 pr-4">{r.source === 'db' ? 'AngelOne (Live)' : r.source === 'demo' ? 'Synthetic' : r.source}</td>
                   <td className="py-2 pr-4 tabular-nums">{r.n_bars}</td>
                   <td className="py-2 pr-4 tabular-nums">{r.n_trades}</td>
                   <td className={`py-2 pr-4 text-right tabular-nums font-medium ${(r.net_pnl ?? 0) >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>

@@ -87,3 +87,10 @@ export async function getBacktestHistory(limit = 50): Promise<BacktestRunSummary
   )
   return data.runs
 }
+
+export async function getBacktestDetail(runId: number): Promise<BacktestRunResponse> {
+  const { data } = await webClient.get<BacktestRunResponse & { status: string }>(
+    `/backtest/api/run/${runId}`,
+  )
+  return data as BacktestRunResponse
+}
