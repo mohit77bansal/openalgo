@@ -145,6 +145,38 @@ def backtest_detail(run_id: int):
     return jsonify({"status": "success", **run})
 
 
+@backtest_bp.route("/api/run/<int:run_id>/favorite", methods=["POST"])
+def backtest_toggle_favorite(run_id: int):
+    """Toggle favorite status on a backtest run."""
+    from database.backtest_db import db_session, BacktestRun
+    try:
+        run = db_session.query(BacktestRun).get(run_id)
+        if not run:
+            return jsonify({"status": "error", "message": "run not found"}), 404
+        run.is_favorite = 0 if run.is_favorite else 1
+        db_session.commit()
+        return jsonify({"status": "success", "is_favorite": bool(run.is_favorite)})
+    finally:
+        db_session.remove()
+
+
+@backtest_bp.route("/api/run/<int:run_id>/remarks", methods=["POST"])
+def backtest_update_remarks(run_id: int):
+    """Update remarks on a backtest run."""
+    from database.backtest_db import db_session, BacktestRun
+    params = request.get_json(silent=True) or {}
+    remarks = params.get("remarks", "")
+    try:
+        run = db_session.query(BacktestRun).get(run_id)
+        if not run:
+            return jsonify({"status": "error", "message": "run not found"}), 404
+        run.remarks = remarks
+        db_session.commit()
+        return jsonify({"status": "success", "remarks": run.remarks})
+    finally:
+        db_session.remove()
+
+
 @backtest_bp.route("/api/run/<int:run_id>/montecarlo", methods=["GET"])
 def backtest_monte_carlo(run_id: int):
     """Run Monte Carlo simulation on a completed backtest's trade PnLs."""

@@ -86,8 +86,11 @@ export default function BacktestResults() {
           <CardContent className="p-4">
             <div className="text-xs font-medium text-muted-foreground mb-1">Strategy Logic</div>
             <p className="text-sm">{result.strategy_description}</p>
+            {result.strategy_source && (
+              <p className="text-xs text-muted-foreground mt-2">Source: {result.strategy_source}</p>
+            )}
             {result.data_note && (
-              <p className="text-xs text-amber-500 mt-2">{result.data_note}</p>
+              <p className="text-xs text-amber-500 mt-1">{result.data_note}</p>
             )}
           </CardContent>
         </Card>

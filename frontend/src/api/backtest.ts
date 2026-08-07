@@ -54,6 +54,7 @@ export interface BacktestRunResponse {
   message?: string
   strategy: string
   strategy_description?: string
+  strategy_source?: string
   start?: string
   end?: string
   symbol: string
@@ -104,7 +105,20 @@ export interface BacktestRunSummary {
   xirr_pct: number | null
   margin_used: number | null
   return_on_margin_pct: number | null
+  is_favorite: boolean
+  remarks: string | null
+  strategy_source: string | null
   status: string
+}
+
+export async function toggleFavorite(runId: number): Promise<{ is_favorite: boolean }> {
+  const { data } = await webClient.post(`/backtest/api/run/${runId}/favorite`)
+  return data
+}
+
+export async function updateRemarks(runId: number, remarks: string): Promise<{ remarks: string }> {
+  const { data } = await webClient.post(`/backtest/api/run/${runId}/remarks`, { remarks })
+  return data
 }
 
 export async function getBacktestHistory(limit = 50): Promise<BacktestRunSummary[]> {

@@ -47,6 +47,9 @@ class BacktestRun(Base):
     xirr_pct = Column(Float)
     margin_used = Column(Float)
     return_on_margin_pct = Column(Float)
+    is_favorite = Column(Integer, default=0)
+    remarks = Column(Text)
+    strategy_source = Column(Text)
     status = Column(String(10), nullable=False, default="success")
     error_message = Column(Text)
     metrics_json = Column(Text)
@@ -82,6 +85,7 @@ def save_backtest_run(result: dict) -> int | None:
             xirr_pct=result.get("xirr_pct"),
             margin_used=result.get("margin_used"),
             return_on_margin_pct=result.get("return_on_margin_pct"),
+            strategy_source=result.get("strategy_source"),
             status=result.get("status", "error"),
             error_message=result.get("message"),
             metrics_json=json.dumps(metrics) if metrics else None,
@@ -130,6 +134,9 @@ def list_backtest_runs(limit: int = 50) -> list[dict]:
                 "xirr_pct": r.xirr_pct,
                 "margin_used": r.margin_used,
                 "return_on_margin_pct": r.return_on_margin_pct,
+                "is_favorite": bool(r.is_favorite),
+                "remarks": r.remarks,
+                "strategy_source": r.strategy_source,
                 "status": r.status,
             }
             for r in runs

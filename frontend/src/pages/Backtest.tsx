@@ -17,7 +17,7 @@ import {
 } from '@tanstack/react-table'
 import { useCallback, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
-import { type BacktestSource, runBacktest, getBacktestHistory, getBacktestDetail, getBacktestStrategies } from '@/api/backtest'
+import { type BacktestSource, runBacktest, getBacktestHistory, getBacktestDetail, getBacktestStrategies, toggleFavorite } from '@/api/backtest'
 import type { BacktestRunSummary, StrategyOption } from '@/api/backtest'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -303,12 +303,15 @@ function downloadCsv(rows: BacktestRunSummary[]): void {
     'XIRR %',
     'RoM %',
     'Fees',
+    'Cum. P&L',
     'Status',
   ]
 
   const escape = (v: string) => (v.includes(',') || v.includes('"') ? `"${v.replace(/"/g, '""')}"` : v)
 
+  let cumPnl = 0
   const csvRows = rows.map((r) => {
+    cumPnl += r.net_pnl ?? 0
     const pct = pnlPct(r)
     return [
       formatTime(r.created_at),
@@ -326,6 +329,7 @@ function downloadCsv(rows: BacktestRunSummary[]): void {
       r.xirr_pct != null ? r.xirr_pct.toFixed(1) : '',
       r.return_on_margin_pct != null ? r.return_on_margin_pct.toFixed(1) : '',
       r.fees_total != null ? String(r.fees_total) : '',
+      String(cumPnl),
       r.status,
     ]
       .map(escape)
@@ -357,6 +361,18 @@ function SortIndicator({ direction }: { direction: false | 'asc' | 'desc' }) {
 
 const columns: ColumnDef<BacktestRunSummary, unknown>[] = [
   {
+    id: 'favorite',
+    header: '',
+    cell: ({ row }) => (
+      <span className={`cursor-pointer text-sm ${row.original.is_favorite ? 'text-amber-400' : 'text-muted-foreground/30 hover:text-amber-400/60'}`}
+            title={row.original.is_favorite ? 'Favorited' : 'Click to favorite'}>
+        {row.original.is_favorite ? '★' : '☆'}
+      </span>
+    ),
+    enableSorting: false,
+    size: 30,
+  },
+  {
     accessorKey: 'created_at',
     header: 'Time',
     cell: ({ row }) => (
@@ -378,6 +394,26 @@ const columns: ColumnDef<BacktestRunSummary, unknown>[] = [
       </span>
     ),
     enableGlobalFilter: true,
+  },
+  {
+    accessorKey: 'strategy_source',
+    header: 'Source',
+    cell: ({ getValue }) => {
+      const v = getValue<string | null>()
+      if (!v) return <span className="text-xs text-muted-foreground">-</span>
+      const short = v.split('|')[0].trim()
+      return <span className="text-xs text-muted-foreground max-w-[120px] truncate block" title={v}>{short}</span>
+    },
+    enableSorting: false,
+  },
+  {
+    accessorKey: 'remarks',
+    header: 'Remarks',
+    cell: ({ getValue }) => {
+      const v = getValue<string | null>()
+      return <span className="text-xs text-muted-foreground max-w-[100px] truncate block" title={v || ''}>{v || '-'}</span>
+    },
+    enableSorting: false,
   },
   {
     id: 'instrument',
@@ -495,6 +531,25 @@ const columns: ColumnDef<BacktestRunSummary, unknown>[] = [
     meta: { align: 'right' },
   },
   {
+    id: 'cumulative_pnl',
+    header: 'Cum. P&L',
+    cell: ({ row, table }) => {
+      const sortedRows = table.getSortedRowModel().rows
+      let cumPnl = 0
+      for (const r of sortedRows) {
+        cumPnl += (r.original as BacktestRunSummary).net_pnl ?? 0
+        if (r.id === row.id) break
+      }
+      return (
+        <span className={`text-right tabular-nums text-xs font-medium block ${cumPnl >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+          {`₹${cumPnl.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`}
+        </span>
+      )
+    },
+    meta: { align: 'right' },
+    enableSorting: false,
+  },
+  {
     accessorKey: 'status',
     header: 'Status',
     cell: ({ getValue }) => {
@@ -524,9 +579,9 @@ function BacktestHistory() {
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }])
   const [globalFilter, setGlobalFilter] = useState('')
 
-  const { data: runs = [], isLoading } = useQuery({
+  const { data: runs = [], isLoading, refetch } = useQuery({
     queryKey: ['backtest', 'history'],
-    queryFn: () => getBacktestHistory(50),
+    queryFn: () => getBacktestHistory(200),
     refetchOnWindowFocus: true,
   })
 
@@ -649,7 +704,14 @@ function BacktestHistory() {
                     onClick={() => handleRowClick(r)}
                   >
                     {row.getVisibleCells().map((cell) => (
-                      <td key={cell.id} className="py-2 pr-3">
+                      <td
+                        key={cell.id}
+                        className="py-2 pr-3"
+                        onClick={cell.column.id === 'favorite' ? (e) => {
+                          e.stopPropagation()
+                          toggleFavorite(r.id).then(() => refetch())
+                        } : undefined}
+                      >
                         {loadingId === r.id && cell.column.id === 'created_at'
                           ? '...'
                           : flexRender(cell.column.columnDef.cell, cell.getContext())}

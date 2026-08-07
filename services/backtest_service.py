@@ -194,8 +194,8 @@ def _build_db_source(symbol: str, exchange: str, interval: str, start: str | Non
 STRATEGY_REGISTRY: dict[str, dict[str, Any]] = {}
 
 
-def _register(key: str, name: str, description: str, factory):
-    STRATEGY_REGISTRY[key] = {"name": name, "description": description, "factory": factory}
+def _register(key: str, name: str, description: str, factory, source: str = ""):
+    STRATEGY_REGISTRY[key] = {"name": name, "description": description, "source": source, "factory": factory}
 
 
 def _init_strategies():
@@ -917,44 +917,54 @@ def _init_strategies():
 
     # --- Register all ---
     _register("orb_15min", "ORB 15-Min (Research-Backed)",
-              "8-year backtested on NIFTY (2017-2026): +91.6% return, 48.7% win rate, Sharpe 1.16, max DD -11.2%, 2,122 trades. Uses first 2×15min candles as the opening range. Buys breakout above OR high, shorts below OR low. SL at opposite OR level, TP at 2× OR range. Short trades = 75% of profits. Friday strongest, Tuesday weakest. Source: intradaylab.com backtest.",
-              lambda sym, **kw: ORB15Min(sym, or_bars=kw.get("or_bars", 2)))
+              "8-year backtested on NIFTY (2017-2026): +91.6% return, 48.7% win rate, Sharpe 1.16, max DD -11.2%, 2,122 trades. Uses first 2x15min candles as the opening range. Buys breakout above OR high, shorts below OR low. SL at opposite OR level, TP at 2x OR range. Short trades = 75% of profits. Friday strongest, Tuesday weakest.",
+              lambda sym, **kw: ORB15Min(sym, or_bars=kw.get("or_bars", 2)),
+              source="intradaylab.com/blog/nifty-orb-breakout-strategy-backtest | 8yr backtest 2017-2026")
 
     _register("global_gap_momentum", "Global Gap Momentum",
-              "Exploits overnight global-market impact on NIFTY open. Small gaps (0.3-0.8%) = fade (65% fill within day). Big gaps (>0.8%) = ride momentum (don't fill same day). GIFT Nifty predicts NIFTY open direction 85-90% of the time. 2:1 R:R. Uses gap size as risk unit.",
-              lambda sym, **kw: GlobalGapMomentum(sym, gap_threshold=kw.get("gap_threshold", 0.003)))
+              "Exploits overnight global-market impact on NIFTY open. Small gaps (0.3-0.8%) = fade (65% fill within day). Big gaps (>0.8%) = ride momentum (don't fill same day). GIFT Nifty predicts NIFTY open direction 85-90% of the time. 2:1 R:R.",
+              lambda sym, **kw: GlobalGapMomentum(sym, gap_threshold=kw.get("gap_threshold", 0.003)),
+              source="marketnetra.in/blog/sgx-nifty-gift-nifty-pre-market-guide | GIFT Nifty correlation research")
 
     _register("atr_channel_breakout", "ATR Channel Breakout",
-              "Turtle-style: buy on 20-day high breakout, sell on 20-day low. SL at 1.5×ATR, TP at 3×ATR = structural 2:1 R:R. Catches big trends, gives back on chop. Best on daily timeframe.",
-              lambda sym, **kw: ATRChannelBreakout(sym, lookback=kw.get("lookback", 20)))
+              "Turtle-style: buy on 20-day high breakout, sell on 20-day low. SL at 1.5xATR, TP at 3xATR = structural 2:1 R:R. Catches big trends, gives back on chop.",
+              lambda sym, **kw: ATRChannelBreakout(sym, lookback=kw.get("lookback", 20)),
+              source="Curtis Faith, 'Way of the Turtle' (2007) | Richard Dennis Turtle Trading experiment 1983-1988")
 
     _register("bollinger_squeeze", "Bollinger Squeeze Breakout",
-              "Enters when Bollinger Bands squeeze (bandwidth < 3%) then expand — breakout above upper band = long, below lower = short. Volatility compression precedes big directional moves. Low frequency, high conviction.",
-              lambda sym, **kw: BollingerSqueezeBreakout(sym, period=kw.get("period", 20)))
+              "Enters when Bollinger Bands squeeze (bandwidth < 3%) then expand. Breakout above upper band = long, below lower = short. Volatility compression precedes big directional moves. Low frequency, high conviction.",
+              lambda sym, **kw: BollingerSqueezeBreakout(sym, period=kw.get("period", 20)),
+              source="John Bollinger, 'Bollinger on Bollinger Bands' (2001) | TTM Squeeze indicator by John Carter")
 
     _register("gap_fade", "Gap Fade (2:1 R:R)",
-              "Fades overnight gaps > 0.4%. SL = 1× gap size, TP = 2× gap size = structural 2:1 R:R. NIFTY fills ~65% of gaps within the day (source: GIFT Nifty correlation studies). Needs only 34% win rate to profit.",
-              lambda sym, **kw: GapFade(sym, min_gap_pct=kw.get("min_gap_pct", 0.004)))
+              "Fades overnight gaps > 0.4%. SL = 1x gap size, TP = 2x gap size = structural 2:1 R:R. NIFTY fills ~65% of gaps within the day. Needs only 34% win rate to profit.",
+              lambda sym, **kw: GapFade(sym, min_gap_pct=kw.get("min_gap_pct", 0.004)),
+              source="equitypandit.com/giftnifty | NIFTY gap-fill statistics 2015-2025")
 
     _register("inside_bar_breakout", "Inside Bar Breakout",
-              "Detects inside bars (today's range inside yesterday's = price compression). Trades the breakout direction with ATR-based SL (0.5×ATR) and TP (2×ATR) = 4:1 R:R. Low frequency, high selectivity. Works best on daily bars.",
-              lambda sym, **kw: InsideBarBreakout(sym))
+              "Detects inside bars (today's range inside yesterday's = price compression). Trades the breakout direction with ATR-based SL (0.5xATR) and TP (2xATR) = 4:1 R:R. Low frequency, high selectivity.",
+              lambda sym, **kw: InsideBarBreakout(sym),
+              source="Al Brooks, 'Trading Price Action' (2012) | Candlestick pattern research, Thomas Bulkowski")
 
     _register("mean_reversion_extreme", "Mean Reversion Extreme",
-              "Multi-signal confirmation: enters ONLY when price hits 2σ Bollinger Band + RSI(7) < 25 or > 75 + above-average volume. Triple filter = high conviction. Exits at SMA (the mean). 1.5×ATR hard stop. Low frequency, ~65% win rate when all 3 conditions align.",
-              lambda sym, **kw: MeanReversionExtreme(sym))
+              "Multi-signal confirmation: enters ONLY when price hits 2s Bollinger Band + RSI(7) < 25 or > 75 + above-average volume. Triple filter = high conviction. Exits at SMA (the mean). 1.5xATR hard stop.",
+              lambda sym, **kw: MeanReversionExtreme(sym),
+              source="Larry Connors, 'Short Term Trading Strategies That Work' (2008) | RSI(2) mean reversion research")
 
     _register("mabb", "MABB (Research-Backed)",
-              "Moving Average Bollinger Bands — 15-year backtested on Bank Nifty. Entry: close > SMA(200) + above upper BB(20,2) + highest close(24) + 2×ATR(30). SL: 2.5×ATR(500). Filters for strong momentum breakouts only. Source: financewithsai.com.",
-              lambda sym, **kw: MABB(sym))
+              "Moving Average Bollinger Bands — 15-year backtested on Bank Nifty. Entry: close > SMA(200) + above upper BB(20,2) + highest close(24) + 2xATR(30). SL: 2.5xATR(500). Filters for strong momentum breakouts only.",
+              lambda sym, **kw: MABB(sym),
+              source="financewithsai.com/s06-banknifty-mabb-intraday-trading-strategy | 15yr Bank Nifty backtest")
 
     _register("vwap_reversion", "VWAP Reversion",
-              "Institutional mean-reversion: buys when price drops >0.8% below VWAP (institutional support), sells when >0.8% above (institutional resistance). TP at VWAP (the mean), SL at 1.5×ATR. VWAP is the volume-weighted average price — the level institutions defend.",
-              lambda sym, **kw: VWAPReversion(sym, dev_pct=kw.get("dev_pct", 0.008)))
+              "Institutional mean-reversion: buys when price drops >0.8% below VWAP, sells when >0.8% above. TP at VWAP (the mean), SL at 1.5xATR. VWAP is the volume-weighted average price — the level institutions defend.",
+              lambda sym, **kw: VWAPReversion(sym, dev_pct=kw.get("dev_pct", 0.008)),
+              source="Brian Shannon, 'Technical Analysis Using Multiple Timeframes' (2008) | VWAP institutional usage")
 
     _register("heikin_ashi_trend", "Heikin-Ashi Trend",
-              "Smoothed candle momentum: enters after 3 consecutive Heikin-Ashi bullish/bearish candles (filters noise). Trailing stop at 2×ATR. Exits on 2 consecutive opposite HA candles. Trend-following with noise reduction.",
-              lambda sym, **kw: HeikinAshiTrend(sym, confirm_bars=kw.get("confirm_bars", 3)))
+              "Smoothed candle momentum: enters after 3 consecutive Heikin-Ashi bullish/bearish candles (filters noise). Trailing stop at 2xATR. Exits on 2 consecutive opposite HA candles. Trend-following with noise reduction.",
+              lambda sym, **kw: HeikinAshiTrend(sym, confirm_bars=kw.get("confirm_bars", 3)),
+              source="Dan Valcu, 'Using Heikin-Ashi Technique' (2004) | Stocks & Commodities Magazine")
 
     # ------------------------------------------------------------------
     # 8. Regime-Adaptive Momentum/Reversion Switcher
@@ -1177,9 +1187,9 @@ _init_strategies()
 
 
 def list_strategies() -> list[dict[str, str]]:
-    """Return all registered strategies with their descriptions."""
+    """Return all registered strategies with their descriptions and sources."""
     return [
-        {"key": k, "name": v["name"], "description": v["description"]}
+        {"key": k, "name": v["name"], "description": v["description"], "source": v.get("source", "")}
         for k, v in STRATEGY_REGISTRY.items()
     ]
 
@@ -1232,9 +1242,10 @@ def run_backtest(
     if not math.isfinite(capital) or capital <= 0:
         capital = DEFAULT_CAPITAL
 
-    strat_entry = STRATEGY_REGISTRY.get(strategy_key, STRATEGY_REGISTRY.get("sma_momentum", {}))
+    strat_entry = STRATEGY_REGISTRY.get(strategy_key, STRATEGY_REGISTRY.get("atr_channel_breakout", {}))
     strat_name = strat_entry.get("name", strategy_key)
     strat_desc = strat_entry.get("description", "")
+    strat_source = strat_entry.get("source", "")
 
     try:
         if source == "db":
@@ -1304,6 +1315,7 @@ def run_backtest(
         "status": "success",
         "strategy": strat_name,
         "strategy_description": strat_desc,
+        "strategy_source": strat_source,
         "symbol": symbol,
         "exchange": exchange,
         "interval": interval,
