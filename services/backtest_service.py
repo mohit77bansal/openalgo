@@ -256,13 +256,15 @@ def run_backtest(
     equity_curve = [[ts.isoformat(), _json_safe(eq)] for ts, eq in curve]
     equity = [{"date": ts.isoformat(), "value": _json_safe(eq)} for ts, eq in curve]
 
-    return {
+    out = {
         "status": "success",
         "strategy": "DemoMomentum",
         "symbol": symbol,
         "exchange": exchange,
         "interval": interval,
         "source": source,
+        "start": start,
+        "end": end,
         "capital": capital,
         "cost_model": cost,
         "n_bars": n_bars,
@@ -271,6 +273,16 @@ def run_backtest(
         "equity_curve": equity_curve,  # [[iso, value]] — for the server-side SVG
         "trades": _json_safe(getattr(result, "trades", [])),
     }
+
+    try:
+        from database.backtest_db import save_backtest_run
+        run_id = save_backtest_run(out)
+        if run_id:
+            out["run_id"] = run_id
+    except Exception:
+        logger.debug("failed to persist backtest run", exc_info=True)
+
+    return out
 
 
 def run_demo_backtest(symbol: str = DEFAULT_SYMBOL, capital: float = DEFAULT_CAPITAL,

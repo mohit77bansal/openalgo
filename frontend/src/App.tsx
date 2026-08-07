@@ -215,6 +215,7 @@ function App() {
                 <Route path="/backtest" element={<Backtest />} />
                 <Route path="/backtest/results" element={<BacktestResults />} />
                 <Route path="/auto-strategies" element={<AutoStrategies />} />
+                <Route path="/trading" element={<Trading />} />
                 <Route path="/portfolio-analyzer" element={<PortfolioAnalyzer />} />
                 <Route path="/gocharting" element={<GoCharting />} />
                 <Route path="/pnl-tracker" element={<PnLTracker />} />
@@ -309,7 +310,6 @@ function App() {
               {/* Full-width protected routes */}
               <Route element={<FullWidthLayout />}>
                 <Route path="/playground" element={<Playground />} />
-                <Route path="/trading" element={<Trading />} />
                 <Route path="/historify" element={<Historify />} />
                 <Route path="/historify/charts" element={<HistorifyCharts />} />
                 <Route path="/historify/charts/:symbol" element={<HistorifyCharts />} />

@@ -707,6 +707,7 @@ def setup_environment(app):
             from database.strategy_portfolio_db import (
                 ensure_strategy_portfolio_tables_exists,
             )
+            from database.backtest_db import init_db as ensure_backtest_tables_exists
 
             db_init_functions = [
                 ("Auth DB", ensure_auth_tables_exists),
@@ -729,6 +730,7 @@ def setup_environment(app):
                 ("Scalping DB", ensure_scalping_tables_exists),
                 ("Leverage DB", ensure_leverage_tables_exists),
                 ("Strategy Portfolio DB", ensure_strategy_portfolio_tables_exists),
+                ("Backtest DB", ensure_backtest_tables_exists),
                 # Created here, not left to APScheduler's own CREATE TABLE in
                 # scheduler.start(). That DDL would otherwise run further down
                 # this function, after db_ready releases the rest of the boot,

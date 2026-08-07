@@ -5,10 +5,11 @@
  * the report page, so a long report does not sit permanently below the form.
  */
 
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
-import { type BacktestSource, runBacktest } from '@/api/backtest'
+import { type BacktestSource, runBacktest, getBacktestHistory } from '@/api/backtest'
+import type { BacktestRunSummary } from '@/api/backtest'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -199,6 +200,71 @@ export default function Backtest() {
           </div>
         </CardContent>
       </Card>
+
+      <BacktestHistory />
     </div>
+  )
+}
+
+function BacktestHistory() {
+  const { data: runs = [], isLoading } = useQuery({
+    queryKey: ['backtest', 'history'],
+    queryFn: () => getBacktestHistory(50),
+    refetchOnWindowFocus: true,
+  })
+
+  if (isLoading) return <p className="text-sm text-muted-foreground">Loading history...</p>
+  if (runs.length === 0) return <p className="text-sm text-muted-foreground">No backtests run yet. Run one above to see it here.</p>
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">Backtest History</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b text-left text-xs text-muted-foreground">
+                <th className="pb-2 pr-4">Time</th>
+                <th className="pb-2 pr-4">Symbol</th>
+                <th className="pb-2 pr-4">Source</th>
+                <th className="pb-2 pr-4">Bars</th>
+                <th className="pb-2 pr-4">Trades</th>
+                <th className="pb-2 pr-4 text-right">Net P&L</th>
+                <th className="pb-2 pr-4 text-right">Fees</th>
+                <th className="pb-2 pr-4">Cost</th>
+                <th className="pb-2">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {runs.map((r: BacktestRunSummary) => (
+                <tr key={r.id} className="border-b border-border/50 last:border-0">
+                  <td className="py-2 pr-4 text-xs text-muted-foreground whitespace-nowrap">
+                    {r.created_at ? new Date(r.created_at).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '-'}
+                  </td>
+                  <td className="py-2 pr-4 font-medium">{r.symbol}/{r.exchange}</td>
+                  <td className="py-2 pr-4">{r.source}</td>
+                  <td className="py-2 pr-4 tabular-nums">{r.n_bars}</td>
+                  <td className="py-2 pr-4 tabular-nums">{r.n_trades}</td>
+                  <td className={`py-2 pr-4 text-right tabular-nums font-medium ${(r.net_pnl ?? 0) >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                    {r.net_pnl != null ? `₹${r.net_pnl.toLocaleString('en-IN', { maximumFractionDigits: 0 })}` : '-'}
+                  </td>
+                  <td className="py-2 pr-4 text-right tabular-nums">
+                    {r.fees_total != null ? `₹${r.fees_total.toLocaleString('en-IN', { maximumFractionDigits: 0 })}` : '-'}
+                  </td>
+                  <td className="py-2 pr-4 text-xs">{r.cost_model}</td>
+                  <td className="py-2">
+                    <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${r.status === 'success' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'}`}>
+                      {r.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
   )
 }

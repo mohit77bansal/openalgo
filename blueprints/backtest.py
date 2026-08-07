@@ -117,3 +117,22 @@ def backtest_run_api():
     )
     status = 200 if result.get("status") == "success" else 500
     return jsonify(result), status
+
+
+@backtest_bp.route("/api/history", methods=["GET"])
+def backtest_history():
+    """List recent backtest runs (newest first)."""
+    from database.backtest_db import list_backtest_runs
+    limit = request.args.get("limit", 50, type=int)
+    runs = list_backtest_runs(limit=min(limit, 200))
+    return jsonify({"status": "success", "runs": runs})
+
+
+@backtest_bp.route("/api/run/<int:run_id>", methods=["GET"])
+def backtest_detail(run_id: int):
+    """Get a single backtest run with full equity curve."""
+    from database.backtest_db import get_backtest_run
+    run = get_backtest_run(run_id)
+    if not run:
+        return jsonify({"status": "error", "message": "run not found"}), 404
+    return jsonify({"status": "success", **run})

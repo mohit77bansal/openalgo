@@ -59,3 +59,31 @@ export async function runBacktest(req: BacktestRunRequest): Promise<BacktestRunR
   const { data } = await webClient.post<BacktestRunResponse>('/backtest/api/run', req)
   return data
 }
+
+export interface BacktestRunSummary {
+  id: number
+  created_at: string
+  strategy: string
+  symbol: string
+  exchange: string
+  interval: string
+  source: string
+  start_date: string | null
+  end_date: string | null
+  capital: number
+  cost_model: string
+  n_bars: number
+  n_trades: number
+  net_pnl: number
+  fees_total: number
+  sharpe: number | null
+  max_drawdown_pct: number | null
+  status: string
+}
+
+export async function getBacktestHistory(limit = 50): Promise<BacktestRunSummary[]> {
+  const { data } = await webClient.get<{ status: string; runs: BacktestRunSummary[] }>(
+    `/backtest/api/history?limit=${limit}`,
+  )
+  return data.runs
+}
