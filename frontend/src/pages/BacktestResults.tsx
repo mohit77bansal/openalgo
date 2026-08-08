@@ -65,7 +65,8 @@ export default function BacktestResults() {
   const m = result.metrics
   // The chart indexes on a bare YYYY-MM-DD; slice keeps it working whether the
   // engine sends a plain date or a full session timestamp.
-  const equity = result.equity.map((p) => ({ date: p.date.slice(0, 10), value: p.value }))
+  // Guard: equity may be absent when the engine only returns metrics.
+  const equity = (result.equity ?? []).map((p) => ({ date: p.date.slice(0, 10), value: p.value }))
 
   // Monte Carlo simulation state
   const [mcData, setMcData] = useState<MonteCarloResult | null>(null)
@@ -105,6 +106,31 @@ export default function BacktestResults() {
         { name: 'P95 (best likely)', color: '#bfdbfe', data: mcData.percentile_curves.p95.map((v: number, i: number) => ({ date: tradeStepDate(i), value: v })) },
       ]
     : []
+
+  // Pre-compute trade-derived stats so the JSX stays readable.
+  const tradePnls: number[] = (result.trades ?? []).map((t: Record<string, unknown>) => {
+    const ef = (t.entry_fill ?? {}) as Record<string, unknown>
+    const xf = (t.exit_fill ?? {}) as Record<string, unknown>
+    const ep = Number(ef.price ?? 0)
+    const xp = Number(xf.price ?? 0)
+    const dir = String(t.direction ?? '')
+    return dir === 'BUY' ? xp - ep : ep - xp
+  })
+  const wins = tradePnls.filter((p) => p >= 0)
+  const losses = tradePnls.filter((p) => p < 0)
+  const winRate = tradePnls.length > 0
+    ? `${((wins.length / tradePnls.length) * 100).toFixed(0)}%`
+    : '-'
+  const avgWin = wins.length ? wins.reduce((a, b) => a + b, 0) / wins.length : 0
+  const avgLoss = losses.length ? losses.reduce((a, b) => a + b, 0) / losses.length : 0
+  const riskReward = Math.abs(avgLoss) > 0 && tradePnls.length > 0
+    ? `1:${(avgWin / Math.abs(avgLoss)).toFixed(1)}`
+    : '-'
+  const grossWin = wins.reduce((a, b) => a + b, 0)
+  const grossLoss = Math.abs(losses.reduce((a, b) => a + b, 0))
+  const profitFactor = grossLoss > 0 && tradePnls.length > 0
+    ? (grossWin / grossLoss).toFixed(2)
+    : '-'
 
   return (
     <div className="container mx-auto space-y-4 p-4">
@@ -157,40 +183,10 @@ export default function BacktestResults() {
         />
         <Stat label="Sharpe" value={num(m.sharpe)} />
         <Stat label="Max Drawdown" value={`${num(m.max_drawdown_pct)}%`} tone="bad" />
-        <Stat label="Trades" value={num(m.n_trades, 0)} sub={`Win rate: ${m.n_trades && result.trades?.length ? `${((result.trades.filter((t: Record<string, unknown>) => { const ef = (t.entry_fill ?? {}) as Record<string, unknown>; const xf = (t.exit_fill ?? {}) as Record<string, unknown>; const ep = Number(ef.price ?? 0); const xp = Number(xf.price ?? 0); const dir = String(t.direction ?? ''); return dir === 'BUY' ? xp > ep : xp < ep; }).length / result.trades.length) * 100).toFixed(0)}%` : '-'}`} />
+        <Stat label="Trades" value={num(m.n_trades, 0)} sub={`Win rate: ${winRate}`} />
         <Stat label="Fees" value={money(m.fees_total)} />
-        <Stat
-          label="Risk:Reward"
-          value={(() => {
-            if (!result.trades?.length) return '-'
-            const wins: number[] = []; const losses: number[] = []
-            for (const t of result.trades as Record<string, unknown>[]) {
-              const ef = (t.entry_fill ?? {}) as Record<string, unknown>
-              const xf = (t.exit_fill ?? {}) as Record<string, unknown>
-              const ep = Number(ef.price ?? 0); const xp = Number(xf.price ?? 0)
-              const dir = String(t.direction ?? '')
-              const pnl = dir === 'BUY' ? xp - ep : ep - xp
-              if (pnl >= 0) wins.push(pnl); else losses.push(Math.abs(pnl))
-            }
-            const avgWin = wins.length ? wins.reduce((a, b) => a + b, 0) / wins.length : 0
-            const avgLoss = losses.length ? losses.reduce((a, b) => a + b, 0) / losses.length : 1
-            return avgLoss > 0 ? `1:${(avgWin / avgLoss).toFixed(1)}` : '-'
-          })()}
-          sub="avg win : avg loss"
-        />
-        <Stat label="Profit Factor" value={(() => {
-          if (!result.trades?.length) return '-'
-          let grossWin = 0; let grossLoss = 0
-          for (const t of result.trades as Record<string, unknown>[]) {
-            const ef = (t.entry_fill ?? {}) as Record<string, unknown>
-            const xf = (t.exit_fill ?? {}) as Record<string, unknown>
-            const ep = Number(ef.price ?? 0); const xp = Number(xf.price ?? 0)
-            const dir = String(t.direction ?? '')
-            const pnl = dir === 'BUY' ? xp - ep : ep - xp
-            if (pnl >= 0) grossWin += pnl; else grossLoss += Math.abs(pnl)
-          }
-          return grossLoss > 0 ? (grossWin / grossLoss).toFixed(2) : '-'
-        })()} sub="gross win / gross loss" />
+        <Stat label="Risk:Reward" value={riskReward} sub="avg win : avg loss" />
+        <Stat label="Profit Factor" value={profitFactor} sub="gross win / gross loss" />
         <Stat label="Capital" value={money(result.capital, 0)} sub={`${result.interval} · ${result.source === 'db' ? 'AngelOne' : 'Synthetic'}`} />
       </div>
 
@@ -205,21 +201,23 @@ export default function BacktestResults() {
         </Card>
       )}
 
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base">Equity Curve</CardTitle>
-          <p className="text-sm text-muted-foreground">
-            Value of {money(result.capital, 0)} over {result.n_bars} bars.
-          </p>
-        </CardHeader>
-        <CardContent>
-          <PortfolioLineChart
-            height={340}
-            format={(v) => money(v, 0)}
-            series={[{ name: 'Equity', color: '#3b82f6', data: equity, area: true }]}
-          />
-        </CardContent>
-      </Card>
+      {equity.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Equity Curve</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Value of {money(result.capital, 0)} over {result.n_bars} bars.
+            </p>
+          </CardHeader>
+          <CardContent>
+            <PortfolioLineChart
+              height={340}
+              format={(v) => money(v, 0)}
+              series={[{ name: 'Equity', color: '#3b82f6', data: equity, area: true }]}
+            />
+          </CardContent>
+        </Card>
+      )}
 
       {/* Monte Carlo Simulation */}
       {result.run_id != null && !mcData && (
@@ -312,17 +310,6 @@ export default function BacktestResults() {
             />
           </div>
         </>
-      )}
-
-      {result.strategy_description && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Strategy Logic</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground">{result.strategy_description}</p>
-          </CardContent>
-        </Card>
       )}
 
       {result.trades && result.trades.length > 0 && (

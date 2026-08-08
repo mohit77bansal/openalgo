@@ -1,6 +1,6 @@
 import { ChevronDown, LayoutGrid } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Navbar } from '@/components/layout/Navbar'
+// Navbar removed — sidebar provides navigation now
 import { ChartPane } from '@/components/trading/ChartPane'
 import { DrawingRail } from '@/components/trading/DrawingRail'
 import { Button } from '@/components/ui/button'
@@ -186,7 +186,6 @@ export default function Trading() {
 
   return (
     <>
-      <Navbar />
       <div className="flex flex-1 flex-col overflow-hidden">
         {/* Layout selector (visual presets) */}
         <div className="flex items-center gap-2 border-b bg-background/95 px-3 py-1.5">

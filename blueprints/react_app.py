@@ -218,6 +218,12 @@ def react_backtest():
     return serve_react_app()
 
 
+# Backtest new run form
+@react_bp.route("/backtest/new")
+def react_backtest_new():
+    return serve_react_app()
+
+
 # Backtest report (equity curve + metrics for the last run)
 @react_bp.route("/backtest/results")
 def react_backtest_results():

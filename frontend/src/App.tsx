@@ -14,6 +14,7 @@ const Home = lazy(() => import('@/pages/Home'))
 const PortfolioBacktester = lazy(() => import('@/pages/PortfolioBacktester'))
 const PortfolioBacktesterResults = lazy(() => import('@/pages/PortfolioBacktesterResults'))
 const Backtest = lazy(() => import('@/pages/Backtest'))
+const BacktestNew = lazy(() => import('@/pages/BacktestNew'))
 const BacktestResults = lazy(() => import('@/pages/BacktestResults'))
 const AutoStrategies = lazy(() => import('@/pages/AutoStrategies'))
 const SipBacktester = lazy(() => import('@/pages/SipBacktester'))
@@ -214,6 +215,7 @@ function App() {
                 <Route path="/sip-backtester" element={<SipBacktester />} />
                 <Route path="/sip-backtester/results" element={<SipBacktesterResults />} />
                 <Route path="/backtest" element={<Backtest />} />
+                <Route path="/backtest/new" element={<BacktestNew />} />
                 <Route path="/backtest/results" element={<BacktestResults />} />
                 <Route path="/auto-strategies" element={<AutoStrategies />} />
                 <Route path="/trading" element={<Trading />} />
