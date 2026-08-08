@@ -1902,6 +1902,38 @@ def run_multi_instrument_backtest(
         "ohlc": [b for p in per_instrument[:1] for b in (p.get("ohlc") or [])],
     }
 
+    # Compute portfolio-level XIRR and margin for storage
+    if combined_equity and len(combined_equity) >= 2:
+        try:
+            first_val = combined_equity[0].get("value", capital)
+            last_val = combined_equity[-1].get("value", capital)
+            from datetime import datetime as _dt
+            first_d = _dt.fromisoformat(combined_equity[0].get("date", "2026-01-01"))
+            last_d = _dt.fromisoformat(combined_equity[-1].get("date", "2026-08-07"))
+            days = (last_d - first_d).total_seconds() / 86400
+            if days > 0 and first_val > 0:
+                total_return = (last_val / first_val) - 1.0
+                years = days / 365.25
+                if years > 0 and total_return > -1:
+                    out["xirr_pct"] = round(((1 + total_return) ** (1 / years) - 1) * 100, 2)
+                elif years > 0:
+                    out["xirr_pct"] = -100.0
+        except Exception:
+            pass
+
+    # Margin: sum of per-instrument margins
+    total_margin = 0
+    for p in per_instrument:
+        sub_result = p.get("metrics", {})
+        # estimate per-instrument margin from allocated capital
+        alloc = p.get("capital_allocated", 0)
+        if alloc > 0:
+            total_margin += alloc * 0.12  # 12% SPAN margin
+    if total_margin > 0:
+        out["margin_used"] = round(total_margin, 0)
+        if total_pnl != 0:
+            out["return_on_margin_pct"] = round((total_pnl / total_margin) * 100, 2)
+
     # Save one portfolio-level row to the DB (not per-instrument)
     try:
         from database.backtest_db import save_backtest_run
