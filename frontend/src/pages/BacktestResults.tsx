@@ -36,19 +36,24 @@ function Stat({
   tone?: 'good' | 'bad'
 }) {
   return (
-    <Card>
+    <Card className={cn(
+      'border-l-4 transition-colors',
+      tone === 'good' && 'border-l-emerald-500/60',
+      tone === 'bad' && 'border-l-rose-500/60',
+      !tone && 'border-l-border',
+    )}>
       <CardContent className="p-4">
-        <div className="text-xs font-medium text-muted-foreground">{label}</div>
+        <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{label}</div>
         <div
           className={cn(
-            'mt-1 text-2xl font-semibold tabular-nums',
+            'mt-1.5 text-2xl font-bold tabular-nums tracking-tight',
             tone === 'good' && 'text-emerald-500',
             tone === 'bad' && 'text-rose-500'
           )}
         >
           {value}
         </div>
-        {sub && <div className="mt-0.5 text-xs text-muted-foreground">{sub}</div>}
+        {sub && <div className="mt-1 text-xs text-muted-foreground">{sub}</div>}
       </CardContent>
     </Card>
   )
@@ -175,12 +180,12 @@ export default function BacktestResults() {
   const maxAbsPnl = Math.max(...monthlyEntries.map(([, v]) => Math.abs(v)), 1)
 
   return (
-    <div className="container mx-auto space-y-4 p-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <Button variant="outline" size="sm" onClick={() => navigate('/backtest')}>
-          Back to Builder
+    <div className="container mx-auto space-y-6 p-4">
+      <div className="flex flex-wrap items-center gap-4 border-b pb-4">
+        <Button variant="ghost" size="sm" onClick={() => navigate('/backtest')} className="text-muted-foreground hover:text-foreground">
+          &larr; Back
         </Button>
-        <div>
+        <div className="flex-1">
           <h1 className="text-2xl font-bold tracking-tight">{result.strategy}</h1>
           <p className="text-sm text-muted-foreground">
             {result.symbol}/{result.exchange} · {result.interval} ·{' '}
@@ -472,8 +477,8 @@ export default function BacktestResults() {
           </CardHeader>
           <CardContent>
             <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
+              <table className="w-full text-xs border-separate border-spacing-0">
+                <thead className="sticky top-0 z-10 bg-card">
                   <tr className="border-b text-left text-muted-foreground">
                     <th className="pb-2 pr-3">#</th>
                     <th className="pb-2 pr-3">Instrument</th>
@@ -508,7 +513,7 @@ export default function BacktestResults() {
                       try { return new Date(ts).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }) } catch { return ts.slice(0, 16) }
                     }
                     return (
-                      <tr key={i} className="border-b border-border/50 last:border-0">
+                      <tr key={i} className="border-b border-border/50 last:border-0 even:bg-muted/20 hover:bg-accent/40 transition-colors">
                         <td className="py-1.5 pr-3 text-muted-foreground">{i + 1}</td>
                         <td className="py-1.5 pr-3 font-medium text-xs">{String(inst.symbol ?? t.instrument_id ?? '-')}</td>
                         <td className={cn('py-1.5 pr-3 font-medium', sign > 0 ? 'text-emerald-500' : 'text-rose-500')}>
