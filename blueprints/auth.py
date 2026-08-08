@@ -348,11 +348,12 @@ def login():
                                   login_type="resume", broker=session.get("broker"))
                 return resumed
 
-            # No valid broker session — redirect to broker login
-            logger.info("[LOGIN] No valid broker session, redirecting to /broker")
+            # No valid broker session — user is still authenticated (broker optional)
+            session["logged_in"] = True
+            logger.info("[LOGIN] No broker session, but user is authenticated — going to dashboard")
             from database.auth_db import log_login_attempt
             log_login_attempt(username, ip, ua, status="success", login_type="password")
-            return jsonify({"status": "success"}), 200
+            return jsonify({"status": "success", "redirect": "/dashboard"}), 200
         else:
             from database.auth_db import log_login_attempt
             log_login_attempt(username, get_real_ip(),
