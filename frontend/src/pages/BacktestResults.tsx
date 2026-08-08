@@ -6,13 +6,23 @@
  * before it navigates here. No result means the user deep-linked or reloaded,
  * so we send them back to the form rather than render an empty report.
  */
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Navigate, useNavigate } from 'react-router'
+import {
+  type ColumnDef,
+  type SortingState,
+  flexRender,
+  getCoreRowModel,
+  getFilteredRowModel,
+  getSortedRowModel,
+  useReactTable,
+} from '@tanstack/react-table'
 import { getMonteCarloSimulation, type MonteCarloResult } from '@/api/backtest'
 import { OHLCChart } from '@/components/backtest/OHLCChart'
 import { PortfolioLineChart } from '@/components/portfolio/PortfolioLineChart'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { useBacktestStore } from '@/stores/backtestStore'
 
@@ -471,72 +481,135 @@ export default function BacktestResults() {
       )}
 
       {result.trades && result.trades.length > 0 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Trades ({result.trades.length})</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs border-separate border-spacing-0">
-                <thead className="sticky top-0 z-10 bg-card">
-                  <tr className="border-b text-left text-muted-foreground">
-                    <th className="pb-2 pr-3">#</th>
-                    <th className="pb-2 pr-3">Instrument</th>
-                    <th className="pb-2 pr-3">Side</th>
-                    <th className="pb-2 pr-3">Entry Time</th>
-                    <th className="pb-2 pr-3 text-right">Entry Price</th>
-                    <th className="pb-2 pr-3">Exit Time</th>
-                    <th className="pb-2 pr-3 text-right">Exit Price</th>
-                    <th className="pb-2 pr-3 text-right">Qty</th>
-                    <th className="pb-2 pr-3 text-right">P&L</th>
-                    <th className="pb-2 text-right">Fees</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.trades.map((t: Record<string, unknown>, i: number) => {
-                    const ef = (t.entry_fill ?? {}) as Record<string, unknown>
-                    const xf = (t.exit_fill ?? {}) as Record<string, unknown>
-                    const inst = (t.instrument ?? ef.instrument ?? {}) as Record<string, unknown>
-                    const entryPrice = Number(ef.price ?? t.entry_price ?? 0)
-                    const exitPrice = Number(xf.price ?? t.exit_price ?? 0)
-                    const qty = Number(ef.quantity ?? xf.quantity ?? t.quantity ?? t.qty ?? 0)
-                    const entryFees = Number(ef.fees ?? 0)
-                    const exitFees = Number(xf.fees ?? 0)
-                    const totalFees = entryFees + exitFees
-                    const dir = String(t.direction ?? t.side ?? '-')
-                    const sign = dir === 'BUY' || dir === 'LONG' ? 1 : -1
-                    const pnl = Number(t.pnl ?? t.realized_pnl ?? ((exitPrice - entryPrice) * qty * sign - totalFees))
-                    const entryTs = String(ef.ts ?? ef.timestamp ?? t.entry_time ?? t.entry_ts ?? '-')
-                    const exitTs = String(xf.ts ?? xf.timestamp ?? t.exit_time ?? t.exit_ts ?? '-')
-                    const formatTs = (ts: string) => {
-                      if (ts === '-') return '-'
-                      try { return new Date(ts).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }) } catch { return ts.slice(0, 16) }
-                    }
-                    return (
-                      <tr key={i} className="border-b border-border/50 last:border-0 even:bg-muted/20 hover:bg-accent/40 transition-colors">
-                        <td className="py-1.5 pr-3 text-muted-foreground">{i + 1}</td>
-                        <td className="py-1.5 pr-3 font-medium text-xs">{String(inst.symbol ?? t.instrument_id ?? '-')}</td>
-                        <td className={cn('py-1.5 pr-3 font-medium', sign > 0 ? 'text-emerald-500' : 'text-rose-500')}>
-                          {dir}
-                        </td>
-                        <td className="py-1.5 pr-3 text-muted-foreground whitespace-nowrap">{formatTs(entryTs)}</td>
-                        <td className="py-1.5 pr-3 text-right tabular-nums">{entryPrice.toFixed(2)}</td>
-                        <td className="py-1.5 pr-3 text-muted-foreground whitespace-nowrap">{formatTs(exitTs)}</td>
-                        <td className="py-1.5 pr-3 text-right tabular-nums">{exitPrice.toFixed(2)}</td>
-                        <td className="py-1.5 pr-3 text-right tabular-nums">{qty || '-'}</td>
-                        <td className={cn('py-1.5 pr-3 text-right tabular-nums font-medium', pnl >= 0 ? 'text-emerald-500' : 'text-rose-500')}>
-                          {money(pnl)}
-                        </td>
-                        <td className="py-1.5 text-right tabular-nums">{money(totalFees)}</td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
+        <TradesTable trades={result.trades} />
       )}
     </div>
+  )
+}
+
+/* ---------------------------------------------------------------------------
+ * Trades Table — TanStack Table with sort, filter, pin
+ * ------------------------------------------------------------------------ */
+
+interface ParsedTrade {
+  idx: number
+  instrument: string
+  side: string
+  entryTime: string
+  entryPrice: number
+  exitTime: string
+  exitPrice: number
+  qty: number
+  pnl: number
+  fees: number
+  sign: number
+}
+
+const fmtTs = (ts: string) => {
+  if (ts === '-') return '-'
+  try { return new Date(ts).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }) } catch { return ts.slice(0, 16) }
+}
+
+const tradeColumns: ColumnDef<ParsedTrade, unknown>[] = [
+  { accessorKey: 'idx', header: '#', size: 50, cell: ({ getValue }) => <span className="text-muted-foreground">{getValue<number>()}</span> },
+  { accessorKey: 'instrument', header: 'Instrument', size: 180, cell: ({ getValue }) => <span className="font-medium text-xs">{getValue<string>()}</span> },
+  { accessorKey: 'side', header: 'Side', size: 60, cell: ({ row }) => <span className={cn('font-medium', row.original.sign > 0 ? 'text-emerald-500' : 'text-rose-500')}>{row.original.side}</span> },
+  { accessorKey: 'entryTime', header: 'Entry Time', size: 130, cell: ({ getValue }) => <span className="text-muted-foreground whitespace-nowrap">{fmtTs(getValue<string>())}</span> },
+  { accessorKey: 'entryPrice', header: 'Entry Price', size: 100, cell: ({ getValue }) => <span className="text-right tabular-nums block">{getValue<number>().toFixed(2)}</span> },
+  { accessorKey: 'exitTime', header: 'Exit Time', size: 130, cell: ({ getValue }) => <span className="text-muted-foreground whitespace-nowrap">{fmtTs(getValue<string>())}</span> },
+  { accessorKey: 'exitPrice', header: 'Exit Price', size: 100, cell: ({ getValue }) => <span className="text-right tabular-nums block">{getValue<number>().toFixed(2)}</span> },
+  { accessorKey: 'qty', header: 'Qty', size: 60, cell: ({ getValue }) => <span className="text-right tabular-nums block">{getValue<number>()}</span> },
+  { accessorKey: 'pnl', header: 'P&L', size: 120, cell: ({ row }) => <span className={cn('text-right tabular-nums font-medium block', row.original.pnl >= 0 ? 'text-emerald-500' : 'text-rose-500')}>{money(row.original.pnl)}</span>, sortingFn: 'basic' },
+  { accessorKey: 'fees', header: 'Fees', size: 100, cell: ({ getValue }) => <span className="text-right tabular-nums block">{money(getValue<number>())}</span> },
+]
+
+function TradesTable({ trades }: { trades: Record<string, unknown>[] }) {
+  const [sorting, setSorting] = useState<SortingState>([])
+  const [globalFilter, setGlobalFilter] = useState('')
+
+  const data = useMemo<ParsedTrade[]>(() => trades.map((t, i) => {
+    const ef = (t.entry_fill ?? {}) as Record<string, unknown>
+    const xf = (t.exit_fill ?? {}) as Record<string, unknown>
+    const inst = (t.instrument ?? ef.instrument ?? {}) as Record<string, unknown>
+    const entryPrice = Number(ef.price ?? t.entry_price ?? 0)
+    const exitPrice = Number(xf.price ?? t.exit_price ?? 0)
+    const qty = Number(ef.quantity ?? xf.quantity ?? t.quantity ?? t.qty ?? 0)
+    const entryFees = Number(ef.fees ?? 0)
+    const exitFees = Number(xf.fees ?? 0)
+    const dir = String(t.direction ?? t.side ?? '-')
+    const sign = dir === 'BUY' || dir === 'LONG' ? 1 : -1
+    return {
+      idx: i + 1,
+      instrument: String(inst.symbol ?? t.instrument_id ?? '-'),
+      side: dir,
+      entryTime: String(ef.ts ?? ef.timestamp ?? t.entry_time ?? t.entry_ts ?? '-'),
+      entryPrice,
+      exitTime: String(xf.ts ?? xf.timestamp ?? t.exit_time ?? t.exit_ts ?? '-'),
+      exitPrice,
+      qty,
+      pnl: Number(t.pnl ?? t.realized_pnl ?? ((exitPrice - entryPrice) * qty * sign - entryFees - exitFees)),
+      fees: entryFees + exitFees,
+      sign,
+    }
+  }), [trades])
+
+  const table = useReactTable({
+    data,
+    columns: tradeColumns,
+    state: { sorting, globalFilter, columnPinning: { left: ['idx', 'instrument', 'side'] } },
+    onSortingChange: setSorting,
+    onGlobalFilterChange: setGlobalFilter,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+  })
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-base">Trades ({data.length})</CardTitle>
+          <Input placeholder="Filter instrument..." value={globalFilter} onChange={(e) => setGlobalFilter(e.target.value)} className="h-8 w-48 text-xs" />
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
+          <table className="w-full text-xs border-separate border-spacing-0">
+            <thead className="sticky top-0 z-10 bg-card">
+              {table.getHeaderGroups().map((hg) => (
+                <tr key={hg.id} className="border-b text-left text-muted-foreground">
+                  {hg.headers.map((h) => {
+                    const isPinned = h.column.getIsPinned()
+                    return (
+                      <th key={h.id} className={cn('pb-2 pr-3 cursor-pointer select-none whitespace-nowrap', isPinned && 'sticky bg-card z-20')}
+                        style={isPinned ? { left: `${h.column.getStart('left')}px`, position: 'sticky' } : undefined}
+                        onClick={h.column.getToggleSortingHandler()}>
+                        {flexRender(h.column.columnDef.header, h.getContext())}
+                        {h.column.getIsSorted() === 'asc' ? ' ▲' : h.column.getIsSorted() === 'desc' ? ' ▼' : ''}
+                      </th>
+                    )
+                  })}
+                </tr>
+              ))}
+            </thead>
+            <tbody>
+              {table.getRowModel().rows.map((row) => (
+                <tr key={row.id} className="border-b border-border/50 last:border-0 even:bg-muted/20 hover:bg-accent/40 transition-colors">
+                  {row.getVisibleCells().map((cell) => {
+                    const isPinned = cell.column.getIsPinned()
+                    return (
+                      <td key={cell.id} className={cn('py-1.5 pr-3', isPinned && 'sticky bg-card z-10')}
+                        style={isPinned ? { left: `${cell.column.getStart('left')}px`, position: 'sticky' } : undefined}>
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
   )
 }
