@@ -1704,6 +1704,7 @@ def run_backtest(
     cost: str = "zerodha",
     strategy_key: str = "sma_momentum",
     n_bars: int = 120,
+    _save: bool = True,
     **strategy_kwargs,
 ) -> dict[str, Any]:
     """Run a backtest and return a JSON-safe result (see module docstring)."""
@@ -1806,13 +1807,14 @@ def run_backtest(
         "data_note": "Continuous NIFTY futures (stitched across contract rolls by broker API)" if "FUT" in symbol.upper() else None,
     }
 
-    try:
-        from database.backtest_db import save_backtest_run
-        run_id = save_backtest_run(out)
-        if run_id:
-            out["run_id"] = run_id
-    except Exception:
-        logger.debug("failed to persist backtest run", exc_info=True)
+    if _save:
+        try:
+            from database.backtest_db import save_backtest_run
+            run_id = save_backtest_run(out)
+            if run_id:
+                out["run_id"] = run_id
+        except Exception:
+            logger.debug("failed to persist backtest run", exc_info=True)
 
     return out
 
@@ -1849,7 +1851,7 @@ def run_multi_instrument_backtest(
     for i, sym in enumerate(symbols):
         alloc = capital * weights[i]
         result = run_backtest(source=source, symbol=sym, exchange=exchange, interval=interval,
-                              start=start, end=end, capital=alloc, cost=cost, strategy_key=strategy_key)
+                              start=start, end=end, capital=alloc, cost=cost, strategy_key=strategy_key, _save=False)
         m = result.get("metrics", {}) if isinstance(result.get("metrics"), dict) else {}
         pnl = m.get("net_pnl", 0) or 0
         fees = m.get("fees_total", 0) or 0
@@ -1872,15 +1874,37 @@ def run_multi_instrument_backtest(
                 elif eq: total_val += eq[-1].get("value", 0)
             combined_equity.append({"date": date_str, "value": total_val})
     strat_entry = STRATEGY_REGISTRY.get(strategy_key, {})
-    return {
+    out = {
         "status": "success", "strategy": strat_entry.get("name", strategy_key),
         "strategy_description": strat_entry.get("description", ""),
+        "strategy_source": strat_entry.get("source", ""),
+        "symbol": " + ".join(symbols),
         "symbols": symbols, "exchange": exchange, "interval": interval, "source": source,
-        "start": start, "end": end, "total_capital": capital, "cost_model": cost,
-        "n_instruments": n,
+        "start": start, "end": end, "capital": capital, "total_capital": capital, "cost_model": cost,
+        "n_instruments": n, "n_bars": sum(p.get("n_bars", 0) for p in per_instrument),
+        "metrics": {
+            "net_pnl": round(total_pnl, 2),
+            "fees_total": round(total_fees, 2),
+            "n_trades": total_trades,
+            "sharpe": None,
+            "max_drawdown_pct": None,
+        },
         "portfolio_metrics": {
             "total_pnl": round(total_pnl, 2), "total_pnl_pct": round(total_pnl / capital * 100, 2) if capital else 0,
             "total_fees": round(total_fees, 2), "total_trades": total_trades,
         },
+        "equity": combined_equity,
         "per_instrument": per_instrument, "combined_equity": combined_equity,
+        "trades": [],
     }
+
+    # Save one portfolio-level row to the DB (not per-instrument)
+    try:
+        from database.backtest_db import save_backtest_run
+        run_id = save_backtest_run(out)
+        if run_id:
+            out["run_id"] = run_id
+    except Exception:
+        logger.debug("failed to persist multi-instrument backtest", exc_info=True)
+
+    return out
