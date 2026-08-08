@@ -5,7 +5,7 @@ import { MobileBottomNav } from './MobileBottomNav'
 import { Sidebar } from './Sidebar'
 
 export function Layout() {
-  const { isAuthenticated, user } = useAuthStore()
+  const { isAuthenticated } = useAuthStore()
 
   // AuthSync has already synced Flask session with Zustand store
   // So we just need to check the Zustand store state
@@ -13,10 +13,8 @@ export function Layout() {
     return <Navigate to="/login" replace />
   }
 
-  // If logged in but no broker selected, redirect to broker selection
-  if (!user?.broker) {
-    return <Navigate to="/broker" replace />
-  }
+  // Broker connection is optional — users can access backtest, strategies,
+  // and other non-trading pages without a live broker session.
 
   return (
     <SocketProvider>
