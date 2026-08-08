@@ -6,7 +6,7 @@
  * navigates to /backtest/results.
  */
 
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   type Column,
   type ColumnDef,
@@ -23,8 +23,10 @@ import {
 import { ChevronDown, ChevronUp, RotateCcw, Settings2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
-import { type BacktestSource, getBacktestHistory, getBacktestDetail, toggleFavorite } from '@/api/backtest'
-import type { BacktestRunSummary } from '@/api/backtest'
+import { type BacktestSource, getBacktestHistory, getBacktestDetail, toggleFavorite, getStrategyConfigs, activateStrategy, deactivateStrategy } from '@/api/backtest'
+import type { BacktestRunSummary, StrategyConfig } from '@/api/backtest'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
@@ -564,6 +566,95 @@ function BacktestColumnConfig({
 }
 
 /* ---------------------------------------------------------------------------
+ * Strategy Config Panel — Active / Inactive tabs
+ * ------------------------------------------------------------------------ */
+
+function StrategyCard({ s, onActivate, onDeactivate, isLoading }: {
+  s: StrategyConfig; onActivate: (key: string) => void; onDeactivate: (key: string) => void; isLoading: boolean
+}) {
+  return (
+    <div className={`flex items-start justify-between gap-3 rounded-lg border p-3 transition-colors ${s.is_active ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-border hover:bg-muted/30'}`}>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="font-medium text-sm">{s.name}</span>
+          {s.is_active && <Badge variant="outline" className="text-[10px] border-emerald-500/50 text-emerald-500">ACTIVE</Badge>}
+        </div>
+        <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{s.description}</p>
+        {s.is_active && s.default_instruments.length > 0 && (
+          <div className="flex flex-wrap gap-1 mt-1.5">
+            {s.default_instruments.map((inst: string) => (
+              <Badge key={inst} variant="secondary" className="text-[10px] font-normal">{inst.split('25')[0]}</Badge>
+            ))}
+          </div>
+        )}
+        {s.source && <p className="text-[10px] text-muted-foreground/60 mt-1">{s.source.split('|')[0].trim()}</p>}
+      </div>
+      <div className="shrink-0">
+        {s.is_active ? (
+          <Button variant="outline" size="sm" className="h-7 text-xs text-rose-500 border-rose-500/30 hover:bg-rose-500/10" onClick={() => onDeactivate(s.key)} disabled={isLoading}>
+            Deactivate
+          </Button>
+        ) : (
+          <Button variant="outline" size="sm" className="h-7 text-xs text-emerald-500 border-emerald-500/30 hover:bg-emerald-500/10" onClick={() => onActivate(s.key)} disabled={isLoading}>
+            Activate
+          </Button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function StrategyPanel() {
+  const queryClient = useQueryClient()
+  const { data, isLoading } = useQuery({
+    queryKey: ['strategy-configs'],
+    queryFn: getStrategyConfigs,
+    staleTime: 30_000,
+  })
+
+  const activateMut = useMutation({
+    mutationFn: (key: string) => activateStrategy(key),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['strategy-configs'] }); queryClient.invalidateQueries({ queryKey: ['backtest', 'history'] }) },
+  })
+
+  const deactivateMut = useMutation({
+    mutationFn: (key: string) => deactivateStrategy(key),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['strategy-configs'] }),
+  })
+
+  const active = data?.active ?? []
+  const inactive = data?.inactive ?? []
+  const mutLoading = activateMut.isPending || deactivateMut.isPending
+
+  return (
+    <Card>
+      <CardContent className="p-4">
+        <Tabs defaultValue="active">
+          <div className="flex items-center justify-between mb-3">
+            <TabsList className="h-8">
+              <TabsTrigger value="active" className="text-xs px-3">Active <Badge variant="secondary" className="ml-1.5 text-[10px]">{active.length}</Badge></TabsTrigger>
+              <TabsTrigger value="inactive" className="text-xs px-3">Inactive <Badge variant="secondary" className="ml-1.5 text-[10px]">{inactive.length}</Badge></TabsTrigger>
+            </TabsList>
+            {activateMut.isPending && <span className="text-xs text-muted-foreground animate-pulse">Running backtests...</span>}
+          </div>
+          <TabsContent value="active" className="mt-0">
+            {isLoading ? <p className="text-xs text-muted-foreground">Loading...</p> :
+              active.length === 0 ? <p className="text-xs text-muted-foreground">No active strategies. Activate one from the Inactive tab.</p> :
+              <div className="space-y-2">{active.map((s: StrategyConfig) => <StrategyCard key={s.key} s={s} onActivate={(k) => activateMut.mutate(k)} onDeactivate={(k) => deactivateMut.mutate(k)} isLoading={mutLoading} />)}</div>
+            }
+          </TabsContent>
+          <TabsContent value="inactive" className="mt-0">
+            {isLoading ? <p className="text-xs text-muted-foreground">Loading...</p> :
+              <div className="space-y-2">{inactive.map((s: StrategyConfig) => <StrategyCard key={s.key} s={s} onActivate={(k) => activateMut.mutate(k)} onDeactivate={(k) => deactivateMut.mutate(k)} isLoading={mutLoading} />)}</div>
+            }
+          </TabsContent>
+        </Tabs>
+      </CardContent>
+    </Card>
+  )
+}
+
+/* ---------------------------------------------------------------------------
  * Backtest (list page)
  * ------------------------------------------------------------------------ */
 
@@ -656,6 +747,8 @@ export default function Backtest() {
         <h1 className="text-2xl font-bold tracking-tight">Backtests</h1>
         <Button onClick={() => navigate('/backtest/new')}>Run New Backtest</Button>
       </div>
+
+      <StrategyPanel />
 
       {isLoading ? (
         <p className="text-sm text-muted-foreground">Loading history...</p>
