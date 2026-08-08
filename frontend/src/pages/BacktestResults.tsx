@@ -256,49 +256,7 @@ export default function BacktestResults() {
       </div>
 
       {result.per_instrument && result.per_instrument.length > 1 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Per-Instrument Breakdown</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead className="sticky top-0 bg-card">
-                  <tr className="border-b text-left text-muted-foreground">
-                    <th className="pb-2 pr-3">Instrument</th>
-                    <th className="pb-2 pr-3 text-right">Capital</th>
-                    <th className="pb-2 pr-3 text-right">Trades</th>
-                    <th className="pb-2 pr-3 text-right">Net P&L</th>
-                    <th className="pb-2 pr-3 text-right">P&L %</th>
-                    <th className="pb-2 pr-3 text-right">Fees</th>
-                    <th className="pb-2 pr-3 text-right">Sharpe</th>
-                    <th className="pb-2 text-right">Max DD %</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.per_instrument.map((p) => (
-                    <tr key={p.symbol} className="border-b border-border/50 last:border-0 even:bg-muted/20 hover:bg-accent/40 transition-colors">
-                      <td className="py-2 pr-3 font-medium">{p.symbol.split('25')[0]}</td>
-                      <td className="py-2 pr-3 text-right tabular-nums">{money(p.capital_allocated, 0)}</td>
-                      <td className="py-2 pr-3 text-right tabular-nums">{p.n_trades}</td>
-                      <td className={cn('py-2 pr-3 text-right tabular-nums font-medium', p.net_pnl >= 0 ? 'text-emerald-500' : 'text-rose-500')}>
-                        {money(p.net_pnl, 0)}
-                      </td>
-                      <td className={cn('py-2 pr-3 text-right tabular-nums', p.pnl_pct >= 0 ? 'text-emerald-500' : 'text-rose-500')}>
-                        {p.pnl_pct.toFixed(1)}%
-                      </td>
-                      <td className="py-2 pr-3 text-right tabular-nums">{money(p.fees_total, 0)}</td>
-                      <td className="py-2 pr-3 text-right tabular-nums">{p.sharpe != null ? p.sharpe.toFixed(2) : '-'}</td>
-                      <td className={cn('py-2 text-right tabular-nums', (p.max_drawdown_pct ?? 0) < -10 ? 'text-rose-500' : '')}>
-                        {p.max_drawdown_pct != null ? `${p.max_drawdown_pct.toFixed(1)}%` : '-'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
+        <InstrumentBreakdownTable data={result.per_instrument} />
       )}
 
       <PriceChartSection ohlc={result.ohlc ?? []} trades={result.trades ?? []} />
@@ -534,6 +492,75 @@ export default function BacktestResults() {
 
 /* ---------------------------------------------------------------------------
  * Price Chart with instrument selector for multi-instrument runs
+ * ------------------------------------------------------------------------ */
+
+/* ---------------------------------------------------------------------------
+ * Per-Instrument Breakdown — TanStack Table with sort
+ * ------------------------------------------------------------------------ */
+
+type InstrumentRow = { symbol: string; exchange: string; n_trades: number; net_pnl: number; pnl_pct: number; fees_total: number; sharpe: number | null; max_drawdown_pct: number | null; capital_allocated: number }
+
+const instrumentColumns: ColumnDef<InstrumentRow, unknown>[] = [
+  { accessorKey: 'symbol', header: 'Instrument', cell: ({ getValue }) => <span className="font-medium">{String(getValue<string>()).split('25')[0]}</span> },
+  { accessorKey: 'capital_allocated', header: 'Capital', cell: ({ getValue }) => <span className="text-right tabular-nums block">{money(getValue<number>(), 0)}</span> },
+  { accessorKey: 'n_trades', header: 'Trades', cell: ({ getValue }) => <span className="text-right tabular-nums block">{getValue<number>()}</span> },
+  { accessorKey: 'net_pnl', header: 'Net P&L', cell: ({ row }) => <span className={cn('text-right tabular-nums font-medium block', row.original.net_pnl >= 0 ? 'text-emerald-500' : 'text-rose-500')}>{money(row.original.net_pnl, 0)}</span>, sortingFn: 'basic' },
+  { accessorKey: 'pnl_pct', header: 'P&L %', cell: ({ row }) => <span className={cn('text-right tabular-nums block', row.original.pnl_pct >= 0 ? 'text-emerald-500' : 'text-rose-500')}>{row.original.pnl_pct.toFixed(1)}%</span>, sortingFn: 'basic' },
+  { accessorKey: 'fees_total', header: 'Fees', cell: ({ getValue }) => <span className="text-right tabular-nums block">{money(getValue<number>(), 0)}</span> },
+  { accessorKey: 'sharpe', header: 'Sharpe', cell: ({ getValue }) => { const v = getValue<number | null>(); return <span className={cn('text-right tabular-nums font-medium block', v != null && v >= 1.5 ? 'text-emerald-500' : '')}>{v != null ? v.toFixed(2) : '-'}</span> }, sortingFn: 'basic' },
+  { accessorKey: 'max_drawdown_pct', header: 'Max DD %', cell: ({ getValue }) => { const v = getValue<number | null>(); return <span className={cn('text-right tabular-nums block', v != null && v < -10 ? 'text-rose-500' : '')}>{v != null ? `${v.toFixed(1)}%` : '-'}</span> }, sortingFn: 'basic' },
+]
+
+function InstrumentBreakdownTable({ data }: { data: InstrumentRow[] }) {
+  const [sorting, setSorting] = useState<SortingState>([{ id: 'net_pnl', desc: true }])
+
+  const table = useReactTable({
+    data,
+    columns: instrumentColumns,
+    state: { sorting },
+    onSortingChange: setSorting,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+  })
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">Per-Instrument Breakdown</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 bg-card">
+              {table.getHeaderGroups().map((hg) => (
+                <tr key={hg.id} className="border-b text-left text-muted-foreground">
+                  {hg.headers.map((h) => (
+                    <th key={h.id} className="pb-2 pr-3 cursor-pointer select-none whitespace-nowrap" onClick={h.column.getToggleSortingHandler()}>
+                      {flexRender(h.column.columnDef.header, h.getContext())}
+                      {h.column.getIsSorted() === 'asc' ? ' ▲' : h.column.getIsSorted() === 'desc' ? ' ▼' : ''}
+                    </th>
+                  ))}
+                </tr>
+              ))}
+            </thead>
+            <tbody>
+              {table.getRowModel().rows.map((row) => (
+                <tr key={row.id} className="border-b border-border/50 last:border-0 even:bg-muted/20 hover:bg-accent/40 transition-colors">
+                  {row.getVisibleCells().map((cell) => (
+                    <td key={cell.id} className="py-2 pr-3">{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+/* ---------------------------------------------------------------------------
+ * Price Chart with instrument selector
  * ------------------------------------------------------------------------ */
 
 function PriceChartSection({ ohlc, trades }: {
