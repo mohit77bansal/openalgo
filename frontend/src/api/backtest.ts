@@ -73,6 +73,7 @@ export interface BacktestRunResponse {
   margin_used?: number | null
   return_on_margin_pct?: number | null
   data_note?: string | null
+  per_instrument?: { symbol: string; exchange: string; n_trades: number; net_pnl: number; pnl_pct: number; fees_total: number; sharpe: number | null; max_drawdown_pct: number | null; capital_allocated: number }[]
 }
 
 /**

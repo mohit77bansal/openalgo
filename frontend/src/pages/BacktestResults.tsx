@@ -247,6 +247,52 @@ export default function BacktestResults() {
         <Stat label="Capital" value={money(result.capital, 0)} sub={`${result.interval} · ${result.source === 'db' ? 'AngelOne' : 'Synthetic'}`} />
       </div>
 
+      {result.per_instrument && result.per_instrument.length > 1 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Per-Instrument Breakdown</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-card">
+                  <tr className="border-b text-left text-muted-foreground">
+                    <th className="pb-2 pr-3">Instrument</th>
+                    <th className="pb-2 pr-3 text-right">Capital</th>
+                    <th className="pb-2 pr-3 text-right">Trades</th>
+                    <th className="pb-2 pr-3 text-right">Net P&L</th>
+                    <th className="pb-2 pr-3 text-right">P&L %</th>
+                    <th className="pb-2 pr-3 text-right">Fees</th>
+                    <th className="pb-2 pr-3 text-right">Sharpe</th>
+                    <th className="pb-2 text-right">Max DD %</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.per_instrument.map((p) => (
+                    <tr key={p.symbol} className="border-b border-border/50 last:border-0 even:bg-muted/20 hover:bg-accent/40 transition-colors">
+                      <td className="py-2 pr-3 font-medium">{p.symbol.split('25')[0]}</td>
+                      <td className="py-2 pr-3 text-right tabular-nums">{money(p.capital_allocated, 0)}</td>
+                      <td className="py-2 pr-3 text-right tabular-nums">{p.n_trades}</td>
+                      <td className={cn('py-2 pr-3 text-right tabular-nums font-medium', p.net_pnl >= 0 ? 'text-emerald-500' : 'text-rose-500')}>
+                        {money(p.net_pnl, 0)}
+                      </td>
+                      <td className={cn('py-2 pr-3 text-right tabular-nums', p.pnl_pct >= 0 ? 'text-emerald-500' : 'text-rose-500')}>
+                        {p.pnl_pct.toFixed(1)}%
+                      </td>
+                      <td className="py-2 pr-3 text-right tabular-nums">{money(p.fees_total, 0)}</td>
+                      <td className="py-2 pr-3 text-right tabular-nums">{p.sharpe != null ? p.sharpe.toFixed(2) : '-'}</td>
+                      <td className={cn('py-2 text-right tabular-nums', (p.max_drawdown_pct ?? 0) < -10 ? 'text-rose-500' : '')}>
+                        {p.max_drawdown_pct != null ? `${p.max_drawdown_pct.toFixed(1)}%` : '-'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {result.ohlc && result.ohlc.length > 0 && (
         <Card>
           <CardHeader className="pb-2">

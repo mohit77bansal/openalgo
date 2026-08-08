@@ -1899,6 +1899,8 @@ def run_multi_instrument_backtest(
             "n_trades": trades, "net_pnl": pnl, "pnl_pct": (pnl / alloc * 100) if alloc else 0,
             "fees_total": fees, "metrics": m, "equity": result.get("equity", []),
             "trades": result.get("trades", []), "ohlc": result.get("ohlc", []),
+            "sharpe": _compute_sharpe(result.get("equity", [])),
+            "max_drawdown_pct": _compute_max_drawdown(result.get("equity", [])),
             "run_id": result.get("run_id"),
         })
         total_pnl += pnl; total_fees += fees; total_trades += trades
@@ -1932,7 +1934,8 @@ def run_multi_instrument_backtest(
             "total_fees": round(total_fees, 2), "total_trades": total_trades,
         },
         "equity": combined_equity,
-        "per_instrument": per_instrument, "combined_equity": combined_equity,
+        "per_instrument": [{k: v for k, v in p.items() if k not in ("equity", "trades", "ohlc")} for p in per_instrument],
+        "combined_equity": combined_equity,
         "trades": [t for p in per_instrument for t in (p.get("trades") or [])],
         "ohlc": [b for p in per_instrument[:1] for b in (p.get("ohlc") or [])],
     }

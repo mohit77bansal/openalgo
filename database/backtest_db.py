@@ -56,6 +56,7 @@ class BacktestRun(Base):
     equity_json = Column(Text)
     trades_json = Column(Text)
     ohlc_json = Column(Text)
+    per_instrument_json = Column(Text)
 
 
 def init_db():
@@ -93,6 +94,7 @@ def save_backtest_run(result: dict) -> int | None:
             equity_json=json.dumps(result.get("equity", [])),
             trades_json=json.dumps(result.get("trades", [])),
             ohlc_json=json.dumps(result.get("ohlc", [])),
+            per_instrument_json=json.dumps(result.get("per_instrument", [])),
         )
         db_session.add(run)
         db_session.commit()
@@ -184,6 +186,7 @@ def get_backtest_run(run_id: int) -> dict | None:
             "equity": json.loads(r.equity_json) if r.equity_json else [],
             "trades": json.loads(r.trades_json) if r.trades_json else [],
             "ohlc": json.loads(r.ohlc_json) if getattr(r, 'ohlc_json', None) else [],
+            "per_instrument": json.loads(r.per_instrument_json) if getattr(r, 'per_instrument_json', None) else [],
         }
     finally:
         db_session.remove()
