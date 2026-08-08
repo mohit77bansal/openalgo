@@ -1752,8 +1752,10 @@ def run_backtest(
                 # for a single investment period
                 total_return = (last_eq / first_eq) - 1.0
                 years = days / 365.25
-                if years > 0:
+                if years > 0 and total_return > -1:
                     xirr_pct = ((1 + total_return) ** (1 / years) - 1) * 100
+                elif years > 0:
+                    xirr_pct = -100.0  # lost more than 100%
         except Exception:
             pass
 

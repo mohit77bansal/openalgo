@@ -184,3 +184,32 @@ export async function getMonteCarloSimulation(runId: number): Promise<MonteCarlo
   )
   return data
 }
+
+// Strategy config (active/inactive)
+export interface StrategyConfig {
+  key: string
+  name: string
+  description: string
+  source: string
+  is_active: boolean
+  default_instruments: string[]
+  default_interval: string
+  default_capital: number
+  default_cost: string
+  remarks: string
+}
+
+export async function getStrategyConfigs(): Promise<{ active: StrategyConfig[]; inactive: StrategyConfig[] }> {
+  const { data } = await webClient.get<{ active: StrategyConfig[]; inactive: StrategyConfig[] }>('/backtest/api/strategy-configs')
+  return data
+}
+
+export async function activateStrategy(key: string, instruments?: string[]): Promise<unknown> {
+  const { data } = await webClient.post(`/backtest/api/strategy-configs/${key}/activate`, { instruments })
+  return data
+}
+
+export async function deactivateStrategy(key: string): Promise<unknown> {
+  const { data } = await webClient.post(`/backtest/api/strategy-configs/${key}/deactivate`)
+  return data
+}

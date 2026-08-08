@@ -235,3 +235,45 @@ def backtest_multi_run():
         weights=params.get("weights"),
     )
     return jsonify(result)
+
+
+@backtest_bp.route("/api/strategy-configs", methods=["GET"])
+def get_strategy_configs():
+    """List all strategies with active/inactive status."""
+    from services.strategy_config_service import list_strategy_configs
+    configs = list_strategy_configs()
+    active = [c for c in configs if c["is_active"]]
+    inactive = [c for c in configs if not c["is_active"]]
+    return jsonify({"status": "success", "active": active, "inactive": inactive, "total": len(configs)})
+
+
+@backtest_bp.route("/api/strategy-configs/<key>/activate", methods=["POST"])
+def activate_strategy(key: str):
+    """Activate a strategy — auto-runs backtests on all configured instruments."""
+    from services.strategy_config_service import set_strategy_active
+    params = request.get_json(silent=True) or {}
+    result = set_strategy_active(
+        key=key,
+        active=True,
+        instruments=params.get("instruments"),
+        interval=params.get("interval", "15m"),
+        capital=float(params.get("capital", 500000)),
+        cost=params.get("cost", "zerodha"),
+    )
+    return jsonify(result)
+
+
+@backtest_bp.route("/api/strategy-configs/<key>/deactivate", methods=["POST"])
+def deactivate_strategy(key: str):
+    """Deactivate a strategy."""
+    from services.strategy_config_service import set_strategy_active
+    result = set_strategy_active(key=key, active=False)
+    return jsonify(result)
+
+
+@backtest_bp.route("/api/auto-run-active", methods=["POST"])
+def auto_run_active():
+    """Auto-run all active strategies on their configured instruments."""
+    from services.strategy_config_service import auto_run_all_active
+    results = auto_run_all_active()
+    return jsonify({"status": "success", "results": results})
