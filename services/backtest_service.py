@@ -76,6 +76,24 @@ def _parse_fut_expiry(symbol: str) -> date | None:
     return date(2000 + int(yy), _MONTHS[mon], int(dd))
 
 
+def _lookup_lot_size(symbol: str, exchange: str) -> int:
+    """Look up the actual lot size from the OpenAlgo master contract DB."""
+    try:
+        from database.symbol import db_session, SymToken
+        row = db_session.query(SymToken).filter(
+            SymToken.symbol == symbol, SymToken.exchange == exchange
+        ).first()
+        if row and row.lotsize and row.lotsize > 0:
+            return int(row.lotsize)
+    except Exception:
+        pass
+    # Fallback: known lot sizes for major indices (as of Aug 2026)
+    for prefix, lot in [("BANKNIFTY", 30), ("FINNIFTY", 60), ("MIDCPNIFTY", 120), ("NIFTY", 65)]:
+        if symbol.upper().startswith(prefix):
+            return lot
+    return 1
+
+
 def _instrument_for(symbol: str, exchange: str) -> Any:
     from qbacktest.core.types import Exchange, Instrument, InstrumentType
 
@@ -85,9 +103,9 @@ def _instrument_for(symbol: str, exchange: str) -> Any:
         return Instrument(symbol=symbol, exchange=qex, instrument_type=InstrumentType.INDEX, lot_size=1)
     if ex in ("NFO", "BFO"):
         qex = Exchange.BFO if ex == "BFO" else Exchange.NFO
-        # NIFTY futures lot size (current); refine per-expiry via lot_sizes later.
+        lot = _lookup_lot_size(symbol, ex)
         return Instrument(symbol=symbol, exchange=qex, instrument_type=InstrumentType.FUT,
-                          lot_size=75, expiry=_parse_fut_expiry(symbol))
+                          lot_size=lot, expiry=_parse_fut_expiry(symbol))
     qex = getattr(Exchange, ex, Exchange.NSE)
     return Instrument(symbol=symbol, exchange=qex, instrument_type=InstrumentType.EQ, lot_size=1)
 
@@ -1739,24 +1757,20 @@ def run_backtest(
             pass
 
     # Compute margin used (realistic SPAN margin for the instrument)
-    # NIFTY futures MIS margin ≈ 9% of notional, NRML ≈ 12%
     metrics = _json_safe(getattr(result, "metrics", {}))
     margin_per_lot = 0.0
     margin_used = 0.0
     return_on_margin_pct = None
     inst = _instrument_for(symbol, exchange)
     lot_size = max(getattr(inst, "lot_size", 1) or 1, 1)
-    if lot_size > 1:  # derivative
-        avg_price = capital  # fallback
-        if curve:
-            avg_price = sum(eq for _, eq in curve) / len(curve)
-        # Use a representative price from the data
-        first_price = curve[0][1] / 1 if curve else 24500
-        # For NIFTY futures: SPAN margin MIS ~9%, NRML ~12%
-        margin_pct = 0.12  # NRML (conservative)
-        notional_per_lot = 24500 * lot_size  # approximate
+    if lot_size > 1 and source_obj and source_obj.bars:  # derivative with real data
+        # Get a representative price from the actual bar data
+        mid_idx = len(source_obj.bars) // 2
+        rep_price = source_obj.bars[mid_idx].close if source_obj.bars else 24500
+        margin_pct = 0.12  # NRML (conservative SPAN margin)
+        notional_per_lot = rep_price * lot_size
         margin_per_lot = notional_per_lot * margin_pct
-        margin_used = margin_per_lot  # 1 lot per trade
+        margin_used = margin_per_lot
         net_pnl = (metrics.get("net_pnl") or 0) if isinstance(metrics, dict) else 0
         if margin_used > 0 and net_pnl != 0:
             return_on_margin_pct = (net_pnl / margin_used) * 100
