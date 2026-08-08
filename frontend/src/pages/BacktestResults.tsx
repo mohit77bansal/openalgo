@@ -93,12 +93,14 @@ export default function BacktestResults() {
   const [mcLoading, setMcLoading] = useState(false)
   const [mcError, setMcError] = useState<string | null>(null)
 
+  const runId = result.run_id ?? (result as unknown as Record<string, unknown>).id as number | undefined
+
   const handleRunMonteCarlo = async () => {
-    if (!result.run_id) return
+    if (!runId) return
     setMcLoading(true)
     setMcError(null)
     try {
-      const data = await getMonteCarloSimulation(result.run_id)
+      const data = await getMonteCarloSimulation(runId!)
       if (data.status === 'error') {
         setMcError('Monte Carlo simulation failed')
       } else {
@@ -203,7 +205,10 @@ export default function BacktestResults() {
             {result.start ? ` · ${result.start} → ${result.end}` : ''}
           </p>
         </div>
-        <Button variant="default" size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => navigate('/live-strategies')}>
+        <Button variant="default" size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => {
+          const stratKey = (result as unknown as Record<string, unknown>).strategy_key ?? result.strategy?.toLowerCase().replace(/[^a-z0-9]+/g, '_') ?? ''
+          navigate(`/live-strategies?strategy=${encodeURIComponent(String(stratKey))}&symbol=${encodeURIComponent(result.symbol)}`)
+        }}>
           Go Live
         </Button>
       </div>
@@ -296,16 +301,7 @@ export default function BacktestResults() {
         </Card>
       )}
 
-      {result.ohlc && result.ohlc.length > 0 && (!result.per_instrument || result.per_instrument.length <= 1) && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Price Chart with Trades</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <OHLCChart bars={result.ohlc} trades={result.trades} height={400} />
-          </CardContent>
-        </Card>
-      )}
+      <PriceChartSection ohlc={result.ohlc ?? []} trades={result.trades ?? []} />
 
       {equity.length > 0 && (
         <Card>
@@ -437,7 +433,7 @@ export default function BacktestResults() {
       )}
 
       {/* Monte Carlo Simulation */}
-      {result.run_id != null && !mcData && (
+      {runId != null && !mcData && (
         <Card>
           <CardContent className="flex items-center justify-between p-4">
             <div>
@@ -533,6 +529,66 @@ export default function BacktestResults() {
         <TradesTable trades={result.trades} />
       )}
     </div>
+  )
+}
+
+/* ---------------------------------------------------------------------------
+ * Price Chart with instrument selector for multi-instrument runs
+ * ------------------------------------------------------------------------ */
+
+function PriceChartSection({ ohlc, trades }: {
+  ohlc: { time: string; open: number; high: number; low: number; close: number }[]
+  trades: Record<string, unknown>[]
+}) {
+  const instruments = useMemo(() => {
+    const set = new Set<string>()
+    for (const t of trades) {
+      const inst = (t.instrument ?? (t.entry_fill as Record<string, unknown>)?.instrument ?? {}) as Record<string, unknown>
+      const sym = String(inst.symbol ?? '')
+      if (sym) set.add(sym)
+    }
+    return Array.from(set).sort()
+  }, [trades])
+
+  const [selectedInstrument, setSelectedInstrument] = useState(instruments[0] ?? '')
+
+  const filteredTrades = useMemo(() => {
+    if (!selectedInstrument || instruments.length <= 1) return trades
+    return trades.filter((t) => {
+      const inst = (t.instrument ?? (t.entry_fill as Record<string, unknown>)?.instrument ?? {}) as Record<string, unknown>
+      return String(inst.symbol ?? '') === selectedInstrument
+    })
+  }, [trades, selectedInstrument, instruments])
+
+  if (!ohlc || ohlc.length === 0) return null
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-base">Price Chart with Trades</CardTitle>
+          {instruments.length > 1 && (
+            <select
+              value={selectedInstrument}
+              onChange={(e) => setSelectedInstrument(e.target.value)}
+              className="h-8 rounded-md border bg-background px-2 text-xs"
+            >
+              {instruments.map((inst) => (
+                <option key={inst} value={inst}>{inst.split('25')[0]}</option>
+              ))}
+            </select>
+          )}
+        </div>
+        {instruments.length > 1 && (
+          <p className="text-xs text-muted-foreground">
+            Showing {selectedInstrument.split('25')[0]} price bars. Trade markers filtered to this instrument.
+          </p>
+        )}
+      </CardHeader>
+      <CardContent>
+        <OHLCChart bars={ohlc} trades={filteredTrades} height={400} />
+      </CardContent>
+    </Card>
   )
 }
 
