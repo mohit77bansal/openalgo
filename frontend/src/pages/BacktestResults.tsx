@@ -203,6 +203,9 @@ export default function BacktestResults() {
             {result.start ? ` · ${result.start} → ${result.end}` : ''}
           </p>
         </div>
+        <Button variant="default" size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => navigate('/live-strategies')}>
+          Go Live
+        </Button>
       </div>
 
       {result.strategy_description && (

@@ -188,14 +188,24 @@ def backtest_monte_carlo(run_id: int):
     if not run:
         return jsonify({"status": "error", "message": "run not found"}), 404
 
-    trades = json.loads(run.get("equity_json", "[]")) if isinstance(run.get("equity_json"), str) else []
-    # Extract per-trade PnLs from the trades list
+    # Extract per-trade PnLs from trades (supports both old and new format)
     trade_pnls = []
     for t in (run.get("trades") or []):
-        if isinstance(t, dict):
-            pnl = t.get("pnl") or t.get("realized_pnl") or 0
-            if isinstance(pnl, (int, float)):
-                trade_pnls.append(float(pnl))
+        if not isinstance(t, dict):
+            continue
+        pnl = t.get("pnl") or t.get("realized_pnl")
+        if pnl is None:
+            ef = t.get("entry_fill") or {}
+            xf = t.get("exit_fill") or {}
+            ep = float(ef.get("price", 0) or 0)
+            xp = float(xf.get("price", 0) or 0)
+            qty = float(ef.get("quantity", 0) or xf.get("quantity", 0) or 0)
+            direction = str(t.get("direction", ""))
+            sign = 1 if direction in ("BUY", "LONG") else -1
+            fees = float(ef.get("fees", 0) or 0) + float(xf.get("fees", 0) or 0)
+            pnl = (xp - ep) * qty * sign - fees
+        if isinstance(pnl, (int, float)):
+            trade_pnls.append(float(pnl))
 
     if not trade_pnls:
         return jsonify({"status": "error", "message": "no trade PnLs available for simulation"}), 400
