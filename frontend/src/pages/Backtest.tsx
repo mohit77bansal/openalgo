@@ -88,6 +88,7 @@ function downloadCsv(rows: BacktestRunSummary[]): void {
     'Trades',
     'Net P&L',
     'P&L %',
+    'Sharpe',
     'XIRR %',
     'RoM %',
     'Fees',
@@ -114,6 +115,7 @@ function downloadCsv(rows: BacktestRunSummary[]): void {
       String(r.n_trades ?? ''),
       r.net_pnl != null ? String(r.net_pnl) : '',
       pct != null ? pct.toFixed(2) : '',
+      r.sharpe != null ? r.sharpe.toFixed(2) : '',
       r.xirr_pct != null ? r.xirr_pct.toFixed(1) : '',
       r.return_on_margin_pct != null ? r.return_on_margin_pct.toFixed(1) : '',
       r.fees_total != null ? String(r.fees_total) : '',
@@ -143,7 +145,7 @@ const STORAGE_KEY = 'backtest-table-columns'
 const DEFAULT_COLUMN_ORDER: string[] = [
   'favorite', 'created_at', 'strategy', 'strategy_source', 'remarks',
   'instrument', 'period', 'interval', 'source', 'capital', 'n_trades',
-  'net_pnl', 'pnl_pct', 'xirr_pct', 'return_on_margin_pct', 'fees_total',
+  'net_pnl', 'pnl_pct', 'sharpe', 'xirr_pct', 'return_on_margin_pct', 'fees_total',
   'cumulative_pnl', 'status',
 ]
 
@@ -161,6 +163,7 @@ const COLUMN_LABELS: Record<string, string> = {
   n_trades: 'Trades',
   net_pnl: 'Net P&L',
   pnl_pct: 'P&L %',
+  sharpe: 'Sharpe',
   xirr_pct: 'XIRR %',
   return_on_margin_pct: 'RoM %',
   fees_total: 'Fees',
@@ -377,6 +380,19 @@ const columns: ColumnDef<BacktestRunSummary, unknown>[] = [
       return (
         <span className={`text-right tabular-nums text-xs block ${pnlColor(v)}`}>
           {v != null ? `${v.toFixed(1)}%` : '-'}
+        </span>
+      )
+    },
+    meta: { align: 'right' },
+  },
+  {
+    accessorKey: 'sharpe',
+    header: 'Sharpe',
+    cell: ({ getValue }) => {
+      const v = getValue<number | null>()
+      return (
+        <span className={`text-right tabular-nums text-xs font-medium block ${v != null && v >= 1.5 ? 'text-emerald-500' : v != null && v < 0 ? 'text-rose-500' : ''}`}>
+          {v != null ? v.toFixed(2) : '-'}
         </span>
       )
     },
