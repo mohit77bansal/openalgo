@@ -296,7 +296,7 @@ export default function BacktestResults() {
         </Card>
       )}
 
-      {result.ohlc && result.ohlc.length > 0 && (
+      {result.ohlc && result.ohlc.length > 0 && (!result.per_instrument || result.per_instrument.length <= 1) && (
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-base">Price Chart with Trades</CardTitle>
