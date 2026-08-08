@@ -82,6 +82,7 @@ from blueprints.oitracker import oitracker_bp  # Import the OI tracker blueprint
 from blueprints.orders import orders_bp
 from blueprints.paper_trading import paper_trading_bp  # Paper trading automation + risk
 from blueprints.platforms import platforms_bp
+from blueprints.live_strategy import live_strategy_bp  # Live strategy execution
 from blueprints.strategies import strategies_bp  # Automated strategy management
 from blueprints.playground import playground_bp  # Import the API playground blueprint
 from blueprints.pnltracker import pnltracker_bp  # Import the pnl tracker blueprint
@@ -286,6 +287,7 @@ def create_app():
     # Exempt API endpoints from CSRF protection (they use API key authentication)
     csrf.exempt(api_v1_bp)
     csrf.exempt(paper_trading_bp)
+    csrf.exempt(live_strategy_bp)
 
     # Initialize security middleware before traffic logging
     init_security_middleware(app)
@@ -346,6 +348,7 @@ def create_app():
     app.register_blueprint(backtest_bp)  # Register aladin backtesting module
     app.register_blueprint(paper_trading_bp)  # Register paper trading + risk blueprint
     app.register_blueprint(scanner_bp)  # Register NIFTY F&O arb scanner blueprint
+    app.register_blueprint(live_strategy_bp)  # Register live strategy execution
     app.register_blueprint(strategies_bp)  # Register automated strategy management
 
     # Exempt scanner endpoints from CSRF (called programmatically with API key)
@@ -708,6 +711,7 @@ def setup_environment(app):
                 ensure_strategy_portfolio_tables_exists,
             )
             from database.backtest_db import init_db as ensure_backtest_tables_exists
+            from database.live_strategy_db import init_db as ensure_live_strategy_tables_exists
 
             db_init_functions = [
                 ("Auth DB", ensure_auth_tables_exists),
@@ -731,6 +735,7 @@ def setup_environment(app):
                 ("Leverage DB", ensure_leverage_tables_exists),
                 ("Strategy Portfolio DB", ensure_strategy_portfolio_tables_exists),
                 ("Backtest DB", ensure_backtest_tables_exists),
+                ("Live Strategy DB", ensure_live_strategy_tables_exists),
                 # Created here, not left to APScheduler's own CREATE TABLE in
                 # scheduler.start(). That DDL would otherwise run further down
                 # this function, after db_ready releases the rest of the boot,

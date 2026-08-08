@@ -328,6 +328,17 @@ def react_arbitrage():
     return serve_react_app()
 
 
+# Live Strategies — live strategy execution dashboard
+@react_bp.route("/live-strategies", strict_slashes=False)
+def react_live_strategies():
+    return serve_react_app()
+
+
+@react_bp.route("/live-strategies/<int:strategy_id>", strict_slashes=False)
+def react_live_strategy_detail(strategy_id):
+    return serve_react_app()
+
+
 # Scanner - NIFTY F&O arb scanner dashboard
 @react_bp.route("/scanner")
 def react_scanner():

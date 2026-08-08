@@ -128,6 +128,7 @@ export const sidebarGroups: NavGroup[] = [
       { href: '/flow', label: 'Flow Editor', icon: Workflow },
       { href: '/python', label: 'Python Strategies', icon: Code2 },
       { href: '/scalping', label: 'Scalping', icon: Zap },
+      { href: '/live-strategies', label: 'Live Trading', icon: Zap },
     ],
   },
   {
