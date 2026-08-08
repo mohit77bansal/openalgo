@@ -8,7 +8,6 @@ import {
   Database,
   FileBarChart,
   FileStack,
-  FileText,
   FlaskConical,
   Gauge,
   Key,
@@ -20,7 +19,6 @@ import {
   MessageSquare,
   Search,
   Settings,
-  TrendingUp,
   User,
   Workflow,
   Wrench,
@@ -38,9 +36,7 @@ export interface NavItem {
 // Main navigation items shown in desktop navbar
 export const navItems: NavItem[] = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/orderbook', label: 'Orderbook', icon: ClipboardList },
-  { href: '/tradebook', label: 'Tradebook', icon: FileText },
-  { href: '/positions', label: 'Positions', icon: TrendingUp },
+  { href: '/orders', label: 'Orders', icon: ClipboardList },
   { href: '/trading', label: 'Trading', icon: CandlestickChart },
   { href: '/platforms', label: 'Platforms', icon: Layers },
   { href: '/strategy', label: 'Strategy', icon: Code2 },
@@ -52,9 +48,8 @@ export const navItems: NavItem[] = [
 // Items shown in mobile bottom navigation
 export const bottomNavItems: NavItem[] = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/orderbook', label: 'Orderbook', icon: ClipboardList },
-  { href: '/tradebook', label: 'Tradebook', icon: FileText },
-  { href: '/positions', label: 'Positions', icon: TrendingUp },
+  { href: '/orders', label: 'Orders', icon: ClipboardList },
+  { href: '/trading', label: 'Trading', icon: CandlestickChart },
   { href: '/strategy', label: 'Strategy', icon: Code2 },
 ]
 
@@ -114,9 +109,7 @@ export const sidebarGroups: NavGroup[] = [
     items: [
       { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
       { href: '/trading', label: 'Trading', icon: CandlestickChart },
-      { href: '/orderbook', label: 'Orderbook', icon: ClipboardList },
-      { href: '/tradebook', label: 'Tradebook', icon: FileText },
-      { href: '/positions', label: 'Positions', icon: TrendingUp },
+      { href: '/orders', label: 'Orders', icon: ClipboardList },
     ],
   },
   {

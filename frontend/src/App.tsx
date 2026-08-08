@@ -36,9 +36,7 @@ const SamcoAuth = lazy(() => import('@/pages/SamcoAuth'))
 
 // Main pages
 const Dashboard = lazy(() => import('@/pages/Dashboard'))
-const Positions = lazy(() => import('@/pages/Positions'))
-const OrderBook = lazy(() => import('@/pages/OrderBook'))
-const TradeBook = lazy(() => import('@/pages/TradeBook'))
+const Orders = lazy(() => import('@/pages/Orders'))
 const Holdings = lazy(() => import('@/pages/Holdings'))
 const Token = lazy(() => import('@/pages/Token'))
 const Search = lazy(() => import('@/pages/Search'))
@@ -189,9 +187,11 @@ function App() {
               {/* Protected routes - requires broker auth */}
               <Route element={<Layout />}>
                 <Route path="/dashboard" element={<Dashboard />} />
-                <Route path="/positions" element={<Positions />} />
-                <Route path="/orderbook" element={<OrderBook />} />
-                <Route path="/tradebook" element={<TradeBook />} />
+                <Route path="/orders" element={<Orders />} />
+                {/* Legacy routes redirect to unified Orders page */}
+                <Route path="/orderbook" element={<Navigate to="/orders?tab=orderbook" replace />} />
+                <Route path="/tradebook" element={<Navigate to="/orders?tab=tradebook" replace />} />
+                <Route path="/positions" element={<Navigate to="/orders?tab=positions" replace />} />
                 <Route path="/holdings" element={<HoldingsRoute />} />
                 {/* Search routes - match Flask /search/* routes */}
                 <Route path="/search/token" element={<Token />} />

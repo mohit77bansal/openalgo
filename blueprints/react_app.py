@@ -131,6 +131,11 @@ def react_dashboard():
 
 
 # Trading pages
+@react_bp.route("/orders")
+def react_orders():
+    return serve_react_app()
+
+
 @react_bp.route("/positions")
 def react_positions():
     return serve_react_app()

@@ -1808,3 +1808,65 @@ def run_demo_backtest(symbol: str = DEFAULT_SYMBOL, capital: float = DEFAULT_CAP
     """Backwards-compatible synthetic demo (delegates to run_backtest)."""
     return run_backtest(source="demo", symbol=symbol, capital=capital, cost=cost,
                         n_bars=n_bars, window=window)
+
+
+def run_multi_instrument_backtest(
+    symbols: list[str],
+    exchange: str = "NFO",
+    interval: str = "15m",
+    start: str | None = None,
+    end: str | None = None,
+    capital: float = DEFAULT_CAPITAL,
+    cost: str = "zerodha",
+    strategy_key: str = "atr_channel_breakout",
+    source: str = "db",
+    weights: list[float] | None = None,
+) -> dict[str, Any]:
+    """Run one strategy across multiple instruments. Capital split by weights."""
+    if not symbols:
+        return {"status": "error", "message": "no symbols provided"}
+    n = len(symbols)
+    if weights is None:
+        weights = [1.0 / n] * n
+    per_instrument = []
+    total_pnl = total_fees = 0.0
+    total_trades = 0
+    combined_equity: list[dict[str, Any]] = []
+    for i, sym in enumerate(symbols):
+        alloc = capital * weights[i]
+        result = run_backtest(source=source, symbol=sym, exchange=exchange, interval=interval,
+                              start=start, end=end, capital=alloc, cost=cost, strategy_key=strategy_key)
+        m = result.get("metrics", {}) if isinstance(result.get("metrics"), dict) else {}
+        pnl = m.get("net_pnl", 0) or 0
+        fees = m.get("fees_total", 0) or 0
+        trades = m.get("n_trades", 0) or 0
+        per_instrument.append({
+            "symbol": sym, "exchange": exchange, "capital_allocated": alloc, "weight": weights[i],
+            "status": result.get("status", "error"), "n_bars": result.get("n_bars", 0),
+            "n_trades": trades, "net_pnl": pnl, "pnl_pct": (pnl / alloc * 100) if alloc else 0,
+            "fees_total": fees, "metrics": m, "equity": result.get("equity", []),
+            "trades": result.get("trades", []), "run_id": result.get("run_id"),
+        })
+        total_pnl += pnl; total_fees += fees; total_trades += trades
+    if per_instrument:
+        max_len = max(len(r["equity"]) for r in per_instrument)
+        for step in range(max_len):
+            total_val = 0.0; date_str = ""
+            for r in per_instrument:
+                eq = r["equity"]
+                if step < len(eq): total_val += eq[step].get("value", 0); date_str = eq[step].get("date", date_str)
+                elif eq: total_val += eq[-1].get("value", 0)
+            combined_equity.append({"date": date_str, "value": total_val})
+    strat_entry = STRATEGY_REGISTRY.get(strategy_key, {})
+    return {
+        "status": "success", "strategy": strat_entry.get("name", strategy_key),
+        "strategy_description": strat_entry.get("description", ""),
+        "symbols": symbols, "exchange": exchange, "interval": interval, "source": source,
+        "start": start, "end": end, "total_capital": capital, "cost_model": cost,
+        "n_instruments": n,
+        "portfolio_metrics": {
+            "total_pnl": round(total_pnl, 2), "total_pnl_pct": round(total_pnl / capital * 100, 2) if capital else 0,
+            "total_fees": round(total_fees, 2), "total_trades": total_trades,
+        },
+        "per_instrument": per_instrument, "combined_equity": combined_equity,
+    }

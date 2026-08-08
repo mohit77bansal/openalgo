@@ -286,8 +286,10 @@ def create_app():
 
     # Exempt API endpoints from CSRF protection (they use API key authentication)
     csrf.exempt(api_v1_bp)
+    csrf.exempt(backtest_bp)
     csrf.exempt(paper_trading_bp)
     csrf.exempt(live_strategy_bp)
+    csrf.exempt(strategies_bp)
 
     # Initialize security middleware before traffic logging
     init_security_middleware(app)

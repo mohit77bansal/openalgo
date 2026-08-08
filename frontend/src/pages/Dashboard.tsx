@@ -5,7 +5,8 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { useOrderEventRefresh } from '@/hooks/useOrderEventRefresh'
 import { cn } from '@/lib/utils'
-import { onModeChange } from '@/stores/themeStore'
+import { useAuthStore } from '@/stores/authStore'
+import { onModeChange, useThemeStore } from '@/stores/themeStore'
 
 interface MarginData {
   availablecash: string
@@ -21,10 +22,10 @@ interface MasterContractStatus {
   total_symbols?: number
 }
 
-// Format number in Indian format with Cr/L suffixes
+// Format number in Indian format with ₹ symbol and Cr/L suffixes
 function formatIndianNumber(value: string | number): string {
   const num = typeof value === 'string' ? parseFloat(value) : value
-  if (Number.isNaN(num)) return '0.00'
+  if (Number.isNaN(num)) return '₹0.00'
 
   const isNegative = num < 0
   const absNum = Math.abs(num)
@@ -32,13 +33,13 @@ function formatIndianNumber(value: string | number): string {
   let formatted: string
   if (absNum >= 10000000) {
     // 1 Crore or more
-    formatted = `${(absNum / 10000000).toFixed(2)}Cr`
+    formatted = `₹${(absNum / 10000000).toFixed(2)}Cr`
   } else if (absNum >= 100000) {
     // 1 Lakh or more
-    formatted = `${(absNum / 100000).toFixed(2)}L`
+    formatted = `₹${(absNum / 100000).toFixed(2)}L`
   } else {
-    // Less than 1 Lakh - just decimal format
-    formatted = absNum.toFixed(2)
+    // Less than 1 Lakh - Indian locale formatting (e.g. ₹10,00,000)
+    formatted = `₹${absNum.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
   }
 
   return isNegative ? `-${formatted}` : formatted
@@ -59,6 +60,26 @@ function getPnLBadgeVariant(value: string | number): 'default' | 'destructive' |
   return 'secondary'
 }
 
+// Map raw broker slug to display name
+function getBrokerDisplayName(broker: string | null | undefined): string | null {
+  if (!broker) return null
+  const displayNames: Record<string, string> = {
+    angel: 'AngelOne',
+    angelone: 'AngelOne',
+    upstox: 'Upstox',
+    fyers: 'Fyers',
+    zerodha: 'Zerodha',
+    dhan: 'Dhan',
+    flattrade: 'Flattrade',
+    shoonya: 'Shoonya',
+    firstock: 'Firstock',
+    kotak: 'Kotak Neo',
+    icici: 'ICICIdirect',
+    aliceblue: 'AliceBlue',
+  }
+  return displayNames[broker.toLowerCase()] ?? broker
+}
+
 export default function Dashboard() {
   const [marginData, setMarginData] = useState<MarginData | null>(null)
   const [isLoading, setIsLoading] = useState(true)
@@ -70,6 +91,11 @@ export default function Dashboard() {
   // Broker token revoked/expired while the app session is still valid
   // (daily token rollover). Routes the user to /broker, not /login (#1400).
   const [brokerExpired, setBrokerExpired] = useState(false)
+
+  const user = useAuthStore((s) => s.user)
+  const appMode = useThemeStore((s) => s.appMode)
+  const isSandbox = appMode === 'analyzer'
+  const brokerDisplayName = getBrokerDisplayName(user?.broker)
 
   // Fetch dashboard funds data
   const fetchFundsData = useCallback(async () => {
@@ -188,19 +214,6 @@ export default function Dashboard() {
     }
   }
 
-  const getMasterContractTextColor = () => {
-    switch (masterContract.status) {
-      case 'success':
-        return 'text-green-600 dark:text-green-400'
-      case 'downloading':
-        return 'text-yellow-600 dark:text-yellow-400'
-      case 'error':
-        return 'text-red-600 dark:text-red-400'
-      default:
-        return 'text-muted-foreground'
-    }
-  }
-
   const quickAccessCards = [
     {
       href: '/search',
@@ -304,25 +317,38 @@ export default function Dashboard() {
       {/* Dashboard Header */}
       <div className="flex flex-col lg:flex-row lg:items-start gap-4">
         <div className="flex-1">
-          <h1 className="text-2xl md:text-3xl font-bold">Trading Dashboard</h1>
-          <p className="text-muted-foreground mt-1 md:mt-2 text-sm md:text-base">
-            Overview of your trading account and market positions
-          </p>
-        </div>
-        {/* Master Contract Status Indicator */}
-        <div className="flex items-center gap-2 md:gap-3 bg-muted rounded-lg px-3 md:px-4 py-2 md:py-3 w-fit lg:ml-auto lg:self-start">
-          <span className="text-xs md:text-sm font-medium whitespace-nowrap">Master Contract:</span>
-          <div className="flex items-center gap-2">
-            <div
-              className={cn('w-2.5 h-2.5 md:w-3 md:h-3 rounded-full', getMasterContractLedColor())}
-            />
-            <span
-              className={cn('text-xs md:text-sm', getMasterContractTextColor())}
-              title={masterContract.message}
-            >
-              {getMasterContractStatusText()}
-            </span>
+          <div className="flex items-center gap-3 flex-wrap">
+            <h1 className="text-2xl md:text-3xl font-bold">Trading Dashboard</h1>
+            {isSandbox && (
+              <Badge className="bg-orange-500 text-white hover:bg-orange-600 text-xs font-semibold uppercase tracking-wide">
+                Sandbox Mode
+              </Badge>
+            )}
           </div>
+          <div className="flex items-center gap-2 mt-1 md:mt-2">
+            <p className="text-muted-foreground text-sm md:text-base">
+              {brokerDisplayName
+                ? `Connected to ${brokerDisplayName}`
+                : 'No broker connected — data is from sandbox'}
+            </p>
+            {brokerDisplayName && (
+              <Badge variant="outline" className="text-xs">
+                {brokerDisplayName}
+              </Badge>
+            )}
+          </div>
+        </div>
+        {/* Master Contract Status — small indicator, not prominent */}
+        <div
+          className="flex items-center gap-1.5 w-fit lg:ml-auto lg:self-start"
+          title={masterContract.message ?? getMasterContractStatusText()}
+        >
+          <div
+            className={cn('w-2 h-2 rounded-full flex-shrink-0', getMasterContractLedColor())}
+          />
+          <span className="text-xs text-muted-foreground">
+            {getMasterContractStatusText()}
+          </span>
         </div>
       </div>
 
@@ -338,7 +364,7 @@ export default function Dashboard() {
                   ? '...'
                   : marginData
                     ? formatIndianNumber(marginData.availablecash)
-                    : '0.00'}
+                    : '₹0.00'}
               </p>
               <Badge variant="secondary" className="mt-2">
                 Cash Balance
@@ -357,7 +383,7 @@ export default function Dashboard() {
                   ? '...'
                   : marginData
                     ? formatIndianNumber(marginData.collateral)
-                    : '0.00'}
+                    : '₹0.00'}
               </p>
               <Badge variant="secondary" className="mt-2">
                 Total Collateral
@@ -381,7 +407,7 @@ export default function Dashboard() {
                   ? '...'
                   : marginData
                     ? formatIndianNumber(marginData.m2munrealized)
-                    : '0.00'}
+                    : '₹0.00'}
               </p>
               <Badge
                 variant={marginData ? getPnLBadgeVariant(marginData.m2munrealized) : 'secondary'}
@@ -408,7 +434,7 @@ export default function Dashboard() {
                   ? '...'
                   : marginData
                     ? formatIndianNumber(marginData.m2mrealized)
-                    : '0.00'}
+                    : '₹0.00'}
               </p>
               <Badge
                 variant={marginData ? getPnLBadgeVariant(marginData.m2mrealized) : 'secondary'}
@@ -430,7 +456,7 @@ export default function Dashboard() {
                   ? '...'
                   : marginData
                     ? formatIndianNumber(marginData.utiliseddebits)
-                    : '0.00'}
+                    : '₹0.00'}
               </p>
               <Badge
                 variant="outline"

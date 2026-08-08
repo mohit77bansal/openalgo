@@ -13,7 +13,7 @@
 
 from flask import Blueprint, jsonify, render_template_string, request
 
-from services.backtest_service import DEFAULT_CAPITAL, list_strategies, run_backtest, run_demo_backtest
+from services.backtest_service import DEFAULT_CAPITAL, list_strategies, run_backtest, run_demo_backtest, run_multi_instrument_backtest
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -205,5 +205,33 @@ def backtest_monte_carlo(run_id: int):
         trade_pnls=trade_pnls,
         starting_capital=run.get("capital", 1000000),
         n_simulations=min(n_sims, 10000),
+    )
+    return jsonify(result)
+
+
+@backtest_bp.route("/api/multi-run", methods=["POST"])
+def backtest_multi_run():
+    """Run one strategy across multiple instruments in a single backtest.
+
+    Body: { symbols: ["NIFTY25AUG26FUT", "BANKNIFTY25AUG26FUT", ...],
+            exchange, interval, start, end, capital, cost, strategy,
+            weights: [0.5, 0.5] (optional, equal if omitted) }
+    """
+    params = request.get_json(silent=True) or {}
+    symbols = params.get("symbols", [])
+    if not symbols or not isinstance(symbols, list):
+        return jsonify({"status": "error", "message": "symbols must be a non-empty list"}), 400
+
+    result = run_multi_instrument_backtest(
+        symbols=symbols,
+        exchange=params.get("exchange", "NFO"),
+        interval=params.get("interval", "15m"),
+        start=params.get("start"),
+        end=params.get("end"),
+        capital=float(params.get("capital", DEFAULT_CAPITAL)),
+        cost=params.get("cost", "zerodha"),
+        strategy_key=params.get("strategy", "atr_channel_breakout"),
+        source=params.get("source", "db"),
+        weights=params.get("weights"),
     )
     return jsonify(result)
