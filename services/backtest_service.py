@@ -1863,7 +1863,8 @@ def run_multi_instrument_backtest(
             "status": result.get("status", "error"), "n_bars": result.get("n_bars", 0),
             "n_trades": trades, "net_pnl": pnl, "pnl_pct": (pnl / alloc * 100) if alloc else 0,
             "fees_total": fees, "metrics": m, "equity": result.get("equity", []),
-            "trades": result.get("trades", []), "run_id": result.get("run_id"),
+            "trades": result.get("trades", []), "ohlc": result.get("ohlc", []),
+            "run_id": result.get("run_id"),
         })
         total_pnl += pnl; total_fees += fees; total_trades += trades
     if per_instrument:
@@ -1897,7 +1898,8 @@ def run_multi_instrument_backtest(
         },
         "equity": combined_equity,
         "per_instrument": per_instrument, "combined_equity": combined_equity,
-        "trades": [],
+        "trades": [t for p in per_instrument for t in (p.get("trades") or [])],
+        "ohlc": [b for p in per_instrument[:1] for b in (p.get("ohlc") or [])],
     }
 
     # Save one portfolio-level row to the DB (not per-instrument)
