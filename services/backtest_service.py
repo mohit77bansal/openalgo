@@ -1828,6 +1828,23 @@ def run_demo_backtest(symbol: str = DEFAULT_SYMBOL, capital: float = DEFAULT_CAP
                         n_bars=n_bars, window=window)
 
 
+def _compute_max_drawdown(equity: list[dict[str, Any]]) -> float | None:
+    """Compute max drawdown % from an equity curve [{date, value}]."""
+    if not equity or len(equity) < 2:
+        return None
+    peak = 0.0
+    max_dd = 0.0
+    for pt in equity:
+        val = pt.get("value", 0)
+        if val > peak:
+            peak = val
+        if peak > 0:
+            dd = (peak - val) / peak
+            if dd > max_dd:
+                max_dd = dd
+    return round(-max_dd * 100, 2) if max_dd > 0 else 0.0
+
+
 def run_multi_instrument_backtest(
     symbols: list[str],
     exchange: str = "NFO",
@@ -1890,7 +1907,7 @@ def run_multi_instrument_backtest(
             "fees_total": round(total_fees, 2),
             "n_trades": total_trades,
             "sharpe": None,
-            "max_drawdown_pct": None,
+            "max_drawdown_pct": _compute_max_drawdown(combined_equity),
         },
         "portfolio_metrics": {
             "total_pnl": round(total_pnl, 2), "total_pnl_pct": round(total_pnl / capital * 100, 2) if capital else 0,
