@@ -745,13 +745,23 @@ export default function Backtest() {
   return (
     <div className="container mx-auto space-y-4 p-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold tracking-tight">Backtests</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-bold tracking-tight">Backtests</h1>
+          <div className="flex items-center border rounded-md overflow-hidden ml-3">
+            <button onClick={() => setViewMode('grid')} className={`px-3 py-1.5 text-xs font-medium transition-colors ${viewMode === 'grid' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-muted/50'}`}>
+              <LayoutGrid className="h-3.5 w-3.5 inline mr-1.5" />Strategies
+            </button>
+            <button onClick={() => setViewMode('table')} className={`px-3 py-1.5 text-xs font-medium transition-colors ${viewMode === 'table' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-muted/50'}`}>
+              <List className="h-3.5 w-3.5 inline mr-1.5" />History
+            </button>
+          </div>
+        </div>
         <Button onClick={() => navigate('/backtest/new')}>Run New Backtest</Button>
       </div>
 
-      <StrategyPanel />
-
-      {isLoading ? (
+      {viewMode === 'grid' ? (
+        <StrategyPanel />
+      ) : isLoading ? (
         <p className="text-sm text-muted-foreground">Loading history...</p>
       ) : runs.length === 0 ? (
         <p className="text-sm text-muted-foreground">
@@ -763,14 +773,6 @@ export default function Backtest() {
             <div className="flex items-center justify-between gap-3">
               <CardTitle className="text-base">Backtest History</CardTitle>
               <div className="flex items-center gap-2">
-                <div className="flex items-center border rounded-md overflow-hidden">
-                  <button onClick={() => setViewMode('table')} className={`p-1.5 ${viewMode === 'table' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-muted/50'}`} title="Table view">
-                    <List className="h-3.5 w-3.5" />
-                  </button>
-                  <button onClick={() => setViewMode('grid')} className={`p-1.5 ${viewMode === 'grid' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-muted/50'}`} title="Grid view">
-                    <LayoutGrid className="h-3.5 w-3.5" />
-                  </button>
-                </div>
                 <Input
                   placeholder="Filter strategy..."
                   value={globalFilter}
@@ -790,41 +792,6 @@ export default function Backtest() {
             </div>
           </CardHeader>
           <CardContent>
-            {viewMode === 'grid' ? (
-              <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-                {table.getRowModel().rows.map((row) => {
-                  const r = row.original
-                  const pnl = r.net_pnl ?? 0
-                  const pct = r.capital ? ((pnl / r.capital) * 100).toFixed(1) : '0'
-                  return (
-                    <div
-                      key={row.id}
-                      className={`rounded-lg border p-4 cursor-pointer transition-all hover:shadow-md ${pnl >= 0 ? 'border-emerald-500/20 hover:border-emerald-500/40' : 'border-rose-500/20 hover:border-rose-500/40'}`}
-                      onClick={() => handleRowClick(r)}
-                    >
-                      <div className="flex items-start justify-between mb-2">
-                        <div>
-                          <div className="font-semibold text-sm">{r.strategy}</div>
-                          <div className="text-xs text-muted-foreground">{r.symbol?.split('+').map((s: string) => s.trim().split('25')[0]).join(' · ')}</div>
-                        </div>
-                        <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${r.status === 'success' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'}`}>
-                          {r.status}
-                        </span>
-                      </div>
-                      <div className={`text-2xl font-bold tabular-nums ${pnl >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-                        {pnl >= 0 ? '+' : ''}₹{Math.abs(pnl).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
-                      </div>
-                      <div className="text-xs text-muted-foreground mt-0.5">{pct}% · {r.n_trades} trades · {r.interval}</div>
-                      <div className="flex items-center justify-between mt-3 pt-2 border-t text-[11px] text-muted-foreground">
-                        <span>Fees: ₹{(r.fees_total ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
-                        <span>{r.xirr_pct != null ? `XIRR ${r.xirr_pct.toFixed(0)}%` : ''}</span>
-                        <span>{r.return_on_margin_pct != null ? `RoM ${r.return_on_margin_pct.toFixed(0)}%` : ''}</span>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -888,7 +855,6 @@ export default function Backtest() {
                 </tbody>
               </table>
             </div>
-            )}
           </CardContent>
         </Card>
       )}
