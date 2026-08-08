@@ -27,8 +27,19 @@ interface Props {
   format?: (v: number) => string
 }
 
-/** ISO date -> epoch seconds, which is what the chart indexes on. */
-const toEpoch = (iso: string) => Math.floor(new Date(`${iso}T00:00:00Z`).getTime() / 1000)
+/**
+ * ISO date/timestamp -> epoch seconds, which is what the chart indexes on.
+ *
+ * Bare dates (YYYY-MM-DD) are anchored at midnight UTC. Full timestamps
+ * (with a `T` separator) are parsed directly so intraday equity curves
+ * retain their resolution instead of collapsing to one point per day.
+ */
+const toEpoch = (iso: string): number => {
+  const d = iso.length <= 10 ? new Date(`${iso}T00:00:00Z`) : new Date(iso)
+  const ms = d.getTime()
+  // Guard: invalid dates → NaN; fall back to 0 so the chart doesn't break.
+  return Number.isFinite(ms) ? Math.floor(ms / 1000) : 0
+}
 
 export function PortfolioLineChart({ series, height = 320, format }: Props) {
   const holder = useRef<HTMLDivElement>(null)

@@ -63,10 +63,15 @@ export default function BacktestResults() {
   }
 
   const m = result.metrics
-  // The chart indexes on a bare YYYY-MM-DD; slice keeps it working whether the
-  // engine sends a plain date or a full session timestamp.
+  // PortfolioLineChart's toEpoch handles both bare dates (YYYY-MM-DD) and full
+  // ISO timestamps, so pass the original date through — slicing to 10 chars
+  // collapsed intraday points onto the same epoch second and left the chart
+  // with one point per day, which could strand autoscale at the default 0..1.
   // Guard: equity may be absent when the engine only returns metrics.
-  const equity = (result.equity ?? []).map((p) => ({ date: p.date.slice(0, 10), value: p.value }))
+  const equity = (result.equity ?? []).map((p) => ({
+    date: p.date,
+    value: Number(p.value) || 0,
+  }))
 
   // Monte Carlo simulation state
   const [mcData, setMcData] = useState<MonteCarloResult | null>(null)
@@ -131,6 +136,43 @@ export default function BacktestResults() {
   const profitFactor = grossLoss > 0 && tradePnls.length > 0
     ? (grossWin / grossLoss).toFixed(2)
     : '-'
+
+  // Monthly PnL breakdown — group trades by exit month.
+  const monthlyPnl: Record<string, number> = {}
+  for (const t of (result.trades ?? []) as Record<string, unknown>[]) {
+    const ef = (t.entry_fill ?? {}) as Record<string, unknown>
+    const xf = (t.exit_fill ?? {}) as Record<string, unknown>
+    const exitTs = String(xf.ts ?? xf.timestamp ?? t.exit_time ?? t.exit_ts ?? '')
+    const month = exitTs.slice(0, 7) // YYYY-MM
+    if (month.length < 7 || !month.includes('-')) continue
+
+    const entryPrice = Number(ef.price ?? t.entry_price ?? 0)
+    const exitPrice = Number(xf.price ?? t.exit_price ?? 0)
+    const qty = Number(ef.quantity ?? xf.quantity ?? t.quantity ?? t.qty ?? 0)
+    const dir = String(t.direction ?? t.side ?? '')
+    const sign = dir === 'BUY' || dir === 'LONG' ? 1 : -1
+    const entryFees = Number(ef.fees ?? 0)
+    const exitFees = Number(xf.fees ?? 0)
+    const totalFees = entryFees + exitFees
+    const pnl = Number(
+      t.pnl ?? t.realized_pnl ?? ((exitPrice - entryPrice) * qty * sign - totalFees),
+    )
+    if (!Number.isFinite(pnl)) continue
+    monthlyPnl[month] = (monthlyPnl[month] || 0) + pnl
+  }
+  const monthlyEntries = Object.entries(monthlyPnl).sort(([a], [b]) => a.localeCompare(b))
+  const greenMonths = monthlyEntries.filter(([, v]) => v >= 0)
+  const redMonths = monthlyEntries.filter(([, v]) => v < 0)
+  const bestMonthVal = monthlyEntries.length > 0
+    ? Math.max(...monthlyEntries.map(([, v]) => v))
+    : 0
+  const worstMonthVal = monthlyEntries.length > 0
+    ? Math.min(...monthlyEntries.map(([, v]) => v))
+    : 0
+  const avgMonthVal = monthlyEntries.length > 0
+    ? monthlyEntries.reduce((sum, [, v]) => sum + v, 0) / monthlyEntries.length
+    : 0
+  const maxAbsPnl = Math.max(...monthlyEntries.map(([, v]) => Math.abs(v)), 1)
 
   return (
     <div className="container mx-auto space-y-4 p-4">
@@ -215,6 +257,117 @@ export default function BacktestResults() {
               format={(v) => money(v, 0)}
               series={[{ name: 'Equity', color: '#3b82f6', data: equity, area: true }]}
             />
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Monthly PnL Breakdown */}
+      {monthlyEntries.length > 1 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">PnL Breakdown</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Monthly profit &amp; loss across {monthlyEntries.length} months of trading.
+            </p>
+          </CardHeader>
+          <CardContent>
+            {/* Bar chart — zero line centered, green bars up, red bars down */}
+            <div className="relative" style={{ height: 220 }}>
+              {/* Zero line */}
+              <div
+                className="absolute left-0 right-0 border-t border-muted-foreground/30"
+                style={{ top: '50%' }}
+              />
+              <div className="flex items-stretch h-full gap-px">
+                {monthlyEntries.map(([month, pnl]) => {
+                  const barPct = (Math.abs(pnl) / maxAbsPnl) * 48 // max 48% so it doesn't touch edge
+                  const isPositive = pnl >= 0
+                  return (
+                    <div
+                      key={month}
+                      className="flex-1 relative group"
+                      title={`${month}: ${money(pnl)}`}
+                    >
+                      {isPositive ? (
+                        <div
+                          className="absolute left-0.5 right-0.5 bg-emerald-500/80 rounded-t-sm transition-opacity group-hover:opacity-100 opacity-80"
+                          style={{ bottom: '50%', height: `${Math.max(barPct, 1)}%` }}
+                        />
+                      ) : (
+                        <div
+                          className="absolute left-0.5 right-0.5 bg-rose-500/80 rounded-b-sm transition-opacity group-hover:opacity-100 opacity-80"
+                          style={{ top: '50%', height: `${Math.max(barPct, 1)}%` }}
+                        />
+                      )}
+                      {/* Hover tooltip */}
+                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block z-10">
+                        <div className="bg-popover text-popover-foreground border rounded px-2 py-1 text-[10px] tabular-nums whitespace-nowrap shadow-md">
+                          <span className="text-muted-foreground">{month}: </span>
+                          <span className={isPositive ? 'text-emerald-500' : 'text-rose-500'}>
+                            {money(pnl)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+              {/* X-axis labels — show every label if <= 12 months, else every other */}
+              <div className="flex mt-1.5">
+                {monthlyEntries.map(([month], idx) => {
+                  const showLabel =
+                    monthlyEntries.length <= 12 ||
+                    idx % Math.ceil(monthlyEntries.length / 12) === 0
+                  return (
+                    <div
+                      key={month}
+                      className="flex-1 text-center text-[9px] text-muted-foreground truncate"
+                    >
+                      {showLabel ? month.slice(2) : ''}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* Summary stats row */}
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-4 pt-3 border-t text-xs">
+              <div>
+                <div className="text-muted-foreground">Green Months</div>
+                <div className="text-emerald-500 font-semibold tabular-nums">
+                  {greenMonths.length}
+                </div>
+              </div>
+              <div>
+                <div className="text-muted-foreground">Red Months</div>
+                <div className="text-rose-500 font-semibold tabular-nums">
+                  {redMonths.length}
+                </div>
+              </div>
+              <div>
+                <div className="text-muted-foreground">Best Month</div>
+                <div className="text-emerald-500 font-semibold tabular-nums">
+                  {money(bestMonthVal)}
+                </div>
+              </div>
+              <div>
+                <div className="text-muted-foreground">Worst Month</div>
+                <div className="text-rose-500 font-semibold tabular-nums">
+                  {money(worstMonthVal)}
+                </div>
+              </div>
+              <div>
+                <div className="text-muted-foreground">Avg Month</div>
+                <div
+                  className={cn(
+                    'font-semibold tabular-nums',
+                    avgMonthVal >= 0 ? 'text-emerald-500' : 'text-rose-500',
+                  )}
+                >
+                  {money(avgMonthVal)}
+                </div>
+              </div>
+            </div>
           </CardContent>
         </Card>
       )}
