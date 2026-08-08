@@ -1828,6 +1828,24 @@ def run_demo_backtest(symbol: str = DEFAULT_SYMBOL, capital: float = DEFAULT_CAP
                         n_bars=n_bars, window=window)
 
 
+def _compute_sharpe(equity: list[dict[str, Any]], risk_free_rate: float = 0.07) -> float | None:
+    """Compute annualized Sharpe ratio from equity curve [{date, value}]."""
+    if not equity or len(equity) < 10:
+        return None
+    values = [pt.get("value", 0) for pt in equity]
+    returns = [(values[i] - values[i-1]) / values[i-1] for i in range(1, len(values)) if values[i-1] > 0]
+    if len(returns) < 5:
+        return None
+    avg_ret = sum(returns) / len(returns)
+    std_ret = (sum((r - avg_ret) ** 2 for r in returns) / len(returns)) ** 0.5
+    if std_ret == 0:
+        return None
+    periods_per_year = 252 * 25  # ~25 bars per day for 15m, 252 trading days
+    annual_ret = avg_ret * periods_per_year
+    annual_std = std_ret * (periods_per_year ** 0.5)
+    return round((annual_ret - risk_free_rate) / annual_std, 2)
+
+
 def _compute_max_drawdown(equity: list[dict[str, Any]]) -> float | None:
     """Compute max drawdown % from an equity curve [{date, value}]."""
     if not equity or len(equity) < 2:
@@ -1906,7 +1924,7 @@ def run_multi_instrument_backtest(
             "net_pnl": round(total_pnl, 2),
             "fees_total": round(total_fees, 2),
             "n_trades": total_trades,
-            "sharpe": None,
+            "sharpe": _compute_sharpe(combined_equity),
             "max_drawdown_pct": _compute_max_drawdown(combined_equity),
         },
         "portfolio_metrics": {
