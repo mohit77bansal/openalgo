@@ -123,6 +123,13 @@ STT_HISTORY: list[STTSchedule] = [
         futures_sell=0.0002,             # 0.02%
         options_sell_premium=0.001,      # 0.10%
     ),
+    STTSchedule(
+        effective_from=date(2026, 4, 1),  # Budget 2026-27, effective 1 Apr 2026
+        eq_delivery_both_sides=0.001,     # unchanged
+        eq_intraday_sell=0.00025,         # unchanged
+        futures_sell=0.0005,              # 0.05% (up from 0.02%)
+        options_sell_premium=0.001,       # 0.10% (unchanged)
+    ),
 ]
 
 # Commodity Transaction Tax (MCX). Not used in v1 since we focus on NSE/BSE.
