@@ -63,8 +63,8 @@ export default function Login() {
             sessionData.authenticated &&
             !sessionData.logged_in
           ) {
-            // Logged in but no broker, go to broker selection
-            navigate('/broker', { replace: true })
+            // Logged in but no broker — go to dashboard (broker is optional)
+            navigate('/dashboard', { replace: true })
             return
           }
         }
@@ -140,7 +140,7 @@ export default function Login() {
         setLogin(username, data.broker || '')
         showToast.success('Login successful', 'system')
         // Use redirect from response if provided, otherwise go to broker
-        navigate(data.redirect || '/broker')
+        navigate(data.redirect || '/dashboard')
       }
     } catch (_err) {
       setError('Login failed. Please try again.')
@@ -191,7 +191,7 @@ export default function Login() {
 
       setLogin(username, data.broker || '')
       showToast.success('Login successful', 'system')
-      navigate(data.redirect || '/broker')
+      navigate(data.redirect || '/dashboard')
     } catch (_err) {
       setError('Failed to verify TOTP. Please try again.')
     } finally {

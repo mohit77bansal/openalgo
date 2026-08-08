@@ -307,9 +307,9 @@ def login():
             session.clear()
 
         if "user" in session:
-            logger.info("[LOGIN] User in session but not logged_in, redirecting to /broker")
+            logger.info("[LOGIN] User in session but not logged_in, redirecting to /dashboard")
             return jsonify(
-                {"status": "success", "message": "Already logged in", "redirect": "/broker"}
+                {"status": "success", "message": "Already logged in", "redirect": "/dashboard"}
             ), 200
 
         username = request.form["username"]
@@ -373,7 +373,7 @@ def login():
         session.clear()
 
     if "user" in session:
-        return redirect("/broker")
+        return redirect("/dashboard")
 
     return redirect("/login")
 
