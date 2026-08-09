@@ -7,57 +7,20 @@
  * 3. Activate / Deactivate toggle per strategy
  */
 
+import { type ColumnDef } from '@tanstack/react-table'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { LayoutGrid, List, Play } from 'lucide-react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { getStrategyConfigs, activateStrategy, deactivateStrategy } from '@/api/backtest'
 import type { StrategyConfig } from '@/api/backtest'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { DataTable } from '@/components/ui/data-table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
 import { showToast } from '@/utils/toast'
-
-/* ---------------------------------------------------------------------------
- * Table row for a strategy
- * ------------------------------------------------------------------------ */
-
-function StrategyRow({ s, onToggle, loading }: { s: StrategyConfig; onToggle: () => void; loading: boolean }) {
-  return (
-    <tr className="border-b border-border/50 last:border-0 hover:bg-accent/30 transition-colors">
-      <td className="py-3 pr-3">
-        <div className="font-medium text-sm">{s.name}</div>
-        <div className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{s.description}</div>
-      </td>
-      <td className="py-3 pr-3">
-        {s.default_instruments.length > 0 ? (
-          <div className="flex flex-wrap gap-1">
-            {s.default_instruments.map((inst) => (
-              <Badge key={inst} variant="secondary" className="text-[10px] font-normal">{inst.split('25')[0]}</Badge>
-            ))}
-          </div>
-        ) : <span className="text-xs text-muted-foreground">—</span>}
-      </td>
-      <td className="py-3 pr-3 text-xs text-muted-foreground max-w-[150px] truncate" title={s.source}>{s.source?.split('|')[0]?.trim() || '—'}</td>
-      <td className="py-3 pr-3">
-        {s.is_active
-          ? <Badge className="bg-emerald-500/10 text-emerald-500 border-emerald-500/30 text-[10px]">Active</Badge>
-          : <Badge variant="outline" className="text-muted-foreground text-[10px]">Inactive</Badge>
-        }
-      </td>
-      <td className="py-3">
-        <Button
-          variant="outline" size="sm" className={cn("h-7 text-xs", s.is_active ? "text-rose-500 border-rose-500/30 hover:bg-rose-500/10" : "text-emerald-500 border-emerald-500/30 hover:bg-emerald-500/10")}
-          onClick={onToggle} disabled={loading}
-        >
-          {s.is_active ? 'Deactivate' : 'Activate'}
-        </Button>
-      </td>
-    </tr>
-  )
-}
 
 /* ---------------------------------------------------------------------------
  * Grid card for a strategy
@@ -135,6 +98,33 @@ export default function Backtest() {
     else activateMut.mutate(s.key)
   }
 
+  const strategyColumns = useMemo<ColumnDef<StrategyConfig, unknown>[]>(() => [
+    { accessorKey: 'name', header: 'Strategy', cell: ({ row }) => (
+      <div>
+        <div className="font-medium text-sm">{row.original.name}</div>
+        <div className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{row.original.description}</div>
+      </div>
+    )},
+    { id: 'instruments', header: 'Instruments', cell: ({ row }) => row.original.default_instruments.length > 0 ? (
+      <div className="flex flex-wrap gap-1">{row.original.default_instruments.map(i => <Badge key={i} variant="secondary" className="text-[10px] font-normal">{i.split('25')[0]}</Badge>)}</div>
+    ) : <span className="text-xs text-muted-foreground">—</span>, enableSorting: false },
+    { accessorKey: 'source', header: 'Source', cell: ({ getValue }) => <span className="text-xs text-muted-foreground truncate block max-w-[150px]" title={getValue<string>() || ''}>{(getValue<string>() || '—').split('|')[0].trim()}</span> },
+    { id: 'status', header: 'Status', cell: ({ row }) => row.original.is_active
+      ? <Badge className="bg-emerald-500/10 text-emerald-500 border-emerald-500/30 text-[10px]">Active</Badge>
+      : <Badge variant="outline" className="text-muted-foreground text-[10px]">Inactive</Badge>,
+      sortingFn: (a, b) => (a.original.is_active ? 1 : 0) - (b.original.is_active ? 1 : 0),
+    },
+    { id: 'action', header: 'Action', cell: ({ row }) => (
+      <Button variant="outline" size="sm"
+        className={cn("h-7 text-xs", row.original.is_active ? "text-rose-500 border-rose-500/30 hover:bg-rose-500/10" : "text-emerald-500 border-emerald-500/30 hover:bg-emerald-500/10")}
+        onClick={(e) => { e.stopPropagation(); handleToggle(row.original) }} disabled={mutLoading}>
+        {row.original.is_active ? 'Deactivate' : 'Activate'}
+      </Button>
+    ), enableSorting: false },
+  ], [mutLoading])
+
+  const strategyColumnLabels: Record<string, string> = { name: 'Strategy', instruments: 'Instruments', source: 'Source', status: 'Status', action: 'Action' }
+
   const renderStrategies = (strategies: StrategyConfig[]) => {
     if (strategies.length === 0) {
       return <p className="text-sm text-muted-foreground py-8 text-center">No strategies in this tab.</p>
@@ -151,24 +141,15 @@ export default function Backtest() {
     }
 
     return (
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b text-left text-xs text-muted-foreground">
-              <th className="pb-2 pr-3">Strategy</th>
-              <th className="pb-2 pr-3">Instruments</th>
-              <th className="pb-2 pr-3">Source</th>
-              <th className="pb-2 pr-3">Status</th>
-              <th className="pb-2">Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {strategies.map((s) => (
-              <StrategyRow key={s.key} s={s} onToggle={() => handleToggle(s)} loading={mutLoading} />
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <DataTable
+        columns={strategyColumns}
+        data={strategies}
+        storageKey="backtest-strategies-table"
+        defaultPinned={['name']}
+        columnLabels={strategyColumnLabels}
+        filterPlaceholder="Filter strategies..."
+        showDownload={false}
+      />
     )
   }
 
