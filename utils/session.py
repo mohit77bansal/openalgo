@@ -65,9 +65,13 @@ def is_session_valid():
         logger.debug("Session invalid: 'login_time' not in session")
         return False
 
-    # Skip expiry check for crypto brokers (24/7 markets)
+    # Skip expiry check for crypto brokers (24/7 markets) or when no broker is connected
     if is_session_expiry_disabled():
         logger.debug("Session expiry disabled (crypto broker / 24/7 market)")
+        return True
+
+    if not session.get("broker"):
+        logger.debug("Session valid: no broker connected, skipping daily expiry")
         return True
 
     now_utc = datetime.now(pytz.timezone("UTC"))
