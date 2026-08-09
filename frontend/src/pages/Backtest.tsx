@@ -11,7 +11,6 @@ import {
   type Column,
   type ColumnDef,
   type ColumnOrderState,
-  type ColumnPinningState,
   type SortingState,
   type VisibilityState,
   flexRender,
@@ -171,39 +170,33 @@ const COLUMN_LABELS: Record<string, string> = {
   status: 'Status',
 }
 
-/** Columns pinned to the left edge during horizontal scroll. */
-const PINNED_LEFT: ColumnPinningState = {
-  left: ['favorite', 'created_at', 'strategy'],
-}
+const DEFAULT_PINNED: string[] = ['favorite', 'created_at', 'strategy']
 
 interface PersistedColumnSettings {
   order: string[]
   visibility: VisibilityState
+  pinned: string[]
 }
 
 function loadColumnSettings(): PersistedColumnSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return { order: DEFAULT_COLUMN_ORDER, visibility: {} }
+    if (!raw) return { order: DEFAULT_COLUMN_ORDER, visibility: {}, pinned: DEFAULT_PINNED }
     const parsed = JSON.parse(raw) as Partial<PersistedColumnSettings>
     return {
       order: Array.isArray(parsed.order) ? parsed.order : DEFAULT_COLUMN_ORDER,
-      visibility:
-        parsed.visibility && typeof parsed.visibility === 'object'
-          ? parsed.visibility
-          : {},
+      visibility: parsed.visibility && typeof parsed.visibility === 'object' ? parsed.visibility : {},
+      pinned: Array.isArray(parsed.pinned) ? parsed.pinned : DEFAULT_PINNED,
     }
   } catch {
-    return { order: DEFAULT_COLUMN_ORDER, visibility: {} }
+    return { order: DEFAULT_COLUMN_ORDER, visibility: {}, pinned: DEFAULT_PINNED }
   }
 }
 
-function saveColumnSettings(order: string[], visibility: VisibilityState): void {
+function saveColumnSettings(order: string[], visibility: VisibilityState, pinned: string[]): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ order, visibility }))
-  } catch {
-    // localStorage full or unavailable — silently skip
-  }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ order, visibility, pinned }))
+  } catch {}
 }
 
 /* ---------------------------------------------------------------------------
@@ -469,15 +462,19 @@ const columns: ColumnDef<BacktestRunSummary, unknown>[] = [
 function BacktestColumnConfig({
   columnOrder,
   columnVisibility,
+  pinnedColumns,
   onOrderChange,
   onVisibilityChange,
+  onPinnedChange,
 }: {
   columnOrder: ColumnOrderState
   columnVisibility: VisibilityState
+  pinnedColumns: string[]
   onOrderChange: (order: ColumnOrderState) => void
   onVisibilityChange: (vis: VisibilityState) => void
+  onPinnedChange: (pinned: string[]) => void
 }) {
-  const pinnedIds = PINNED_LEFT.left ?? []
+  const pinnedIds = pinnedColumns
 
   const moveColumn = (colId: string, direction: -1 | 1) => {
     const idx = columnOrder.indexOf(colId)
@@ -500,6 +497,7 @@ function BacktestColumnConfig({
   const resetAll = () => {
     onOrderChange(DEFAULT_COLUMN_ORDER)
     onVisibilityChange({})
+    onPinnedChange(DEFAULT_PINNED)
   }
 
   return (
@@ -512,10 +510,12 @@ function BacktestColumnConfig({
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56 max-h-80 overflow-y-auto">
         <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-muted-foreground">
-          Pinned
+          Pinned (click to unpin)
         </DropdownMenuLabel>
         {pinnedIds.map((id) => (
-          <DropdownMenuCheckboxItem key={id} checked disabled className="opacity-70 text-xs">
+          <DropdownMenuCheckboxItem key={id} checked className="text-xs"
+            onCheckedChange={() => onPinnedChange(pinnedIds.filter(p => p !== id))}
+            onSelect={(e) => e.preventDefault()}>
             {COLUMN_LABELS[id] ?? id}
           </DropdownMenuCheckboxItem>
         ))}
@@ -539,6 +539,12 @@ function BacktestColumnConfig({
                 >
                   {COLUMN_LABELS[id] ?? id}
                 </DropdownMenuCheckboxItem>
+                <button
+                  type="button"
+                  className="p-0.5 mr-1 text-muted-foreground/40 hover:text-blue-500"
+                  title="Pin column"
+                  onClick={(e) => { e.stopPropagation(); onPinnedChange([...pinnedIds, id]) }}
+                >📌</button>
                 <div className="flex flex-col mr-2">
                   <button
                     type="button"
@@ -682,14 +688,15 @@ export default function Backtest() {
   const [globalFilter, setGlobalFilter] = useState('')
   const [viewMode, setViewMode] = useState<'table' | 'grid'>('table')
 
-  // Column ordering + visibility — persisted to localStorage
+  // Column ordering + visibility + pinning — persisted to localStorage
   const [persisted] = useState(loadColumnSettings)
   const [columnOrder, setColumnOrder] = useState<ColumnOrderState>(persisted.order)
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(persisted.visibility)
+  const [pinnedColumns, setPinnedColumns] = useState<string[]>(persisted.pinned)
 
   useEffect(() => {
-    saveColumnSettings(columnOrder, columnVisibility)
-  }, [columnOrder, columnVisibility])
+    saveColumnSettings(columnOrder, columnVisibility, pinnedColumns)
+  }, [columnOrder, columnVisibility, pinnedColumns])
 
   const { data: runs = [], isLoading, refetch } = useQuery({
     queryKey: ['backtest', 'history'],
@@ -735,7 +742,7 @@ export default function Backtest() {
       globalFilter,
       columnOrder,
       columnVisibility,
-      columnPinning: PINNED_LEFT,
+      columnPinning: { left: pinnedColumns },
     },
     onSortingChange: setSorting,
     onGlobalFilterChange: setGlobalFilter,
@@ -761,23 +768,15 @@ export default function Backtest() {
   return (
     <div className="container mx-auto space-y-4 p-4">
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-bold tracking-tight">Backtests</h1>
-          <div className="flex items-center border rounded-md overflow-hidden ml-3">
-            <button onClick={() => setViewMode('grid')} className={`px-3 py-1.5 text-xs font-medium transition-colors ${viewMode === 'grid' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-muted/50'}`}>
-              <LayoutGrid className="h-3.5 w-3.5 inline mr-1.5" />Strategies
-            </button>
-            <button onClick={() => setViewMode('table')} className={`px-3 py-1.5 text-xs font-medium transition-colors ${viewMode === 'table' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-muted/50'}`}>
-              <List className="h-3.5 w-3.5 inline mr-1.5" />History
-            </button>
-          </div>
-        </div>
+        <h1 className="text-2xl font-bold tracking-tight">Backtests</h1>
         <Button onClick={() => navigate('/backtest/new')}>Run New Backtest</Button>
       </div>
 
-      {viewMode === 'grid' ? (
-        <StrategyPanel />
-      ) : isLoading ? (
+      {/* Strategy Management: Active / Inactive tabs */}
+      <StrategyPanel />
+
+      {/* Backtest History: Table with grid toggle */}
+      {isLoading ? (
         <p className="text-sm text-muted-foreground">Loading history...</p>
       ) : runs.length === 0 ? (
         <p className="text-sm text-muted-foreground">
@@ -789,6 +788,14 @@ export default function Backtest() {
             <div className="flex items-center justify-between gap-3">
               <CardTitle className="text-base">Backtest History</CardTitle>
               <div className="flex items-center gap-2">
+                <div className="flex items-center border rounded-md overflow-hidden">
+                  <button onClick={() => setViewMode('table')} className={`p-1.5 ${viewMode === 'table' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-muted/50'}`} title="Table view">
+                    <List className="h-3.5 w-3.5" />
+                  </button>
+                  <button onClick={() => setViewMode('grid')} className={`p-1.5 ${viewMode === 'grid' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-muted/50'}`} title="Card view">
+                    <LayoutGrid className="h-3.5 w-3.5" />
+                  </button>
+                </div>
                 <Input
                   placeholder="Filter strategy..."
                   value={globalFilter}
@@ -798,8 +805,10 @@ export default function Backtest() {
                 <BacktestColumnConfig
                   columnOrder={columnOrder}
                   columnVisibility={columnVisibility}
+                  pinnedColumns={pinnedColumns}
                   onOrderChange={setColumnOrder}
                   onVisibilityChange={setColumnVisibility}
+                  onPinnedChange={setPinnedColumns}
                 />
                 <Button variant="outline" size="sm" className="h-8 text-xs" onClick={handleDownloadCsv}>
                   Download CSV
@@ -808,6 +817,36 @@ export default function Backtest() {
             </div>
           </CardHeader>
           <CardContent>
+            {viewMode === 'grid' ? (
+              <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+                {table.getRowModel().rows.map((row) => {
+                  const r = row.original
+                  const pnl = r.net_pnl ?? 0
+                  const pct = r.capital ? ((pnl / r.capital) * 100).toFixed(1) : '0'
+                  return (
+                    <div key={row.id} className={`rounded-lg border p-4 cursor-pointer transition-all hover:shadow-md ${pnl >= 0 ? 'border-emerald-500/20 hover:border-emerald-500/40' : 'border-rose-500/20 hover:border-rose-500/40'}`}
+                      onClick={() => handleRowClick(r)}>
+                      <div className="flex items-start justify-between mb-2">
+                        <div>
+                          <div className="font-semibold text-sm">{r.strategy}</div>
+                          <div className="text-xs text-muted-foreground">{r.symbol?.split('+').map((s: string) => s.trim().split('25')[0]).join(' · ')}</div>
+                        </div>
+                        <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${r.status === 'success' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'}`}>{r.status}</span>
+                      </div>
+                      <div className={`text-2xl font-bold tabular-nums ${pnl >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                        {pnl >= 0 ? '+' : ''}₹{Math.abs(pnl).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-0.5">{pct}% · {r.n_trades} trades · Sharpe {r.sharpe?.toFixed(2) ?? '-'}</div>
+                      <div className="flex items-center justify-between mt-3 pt-2 border-t text-[11px] text-muted-foreground">
+                        <span>Fees: ₹{(r.fees_total ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
+                        <span>{r.xirr_pct != null ? `XIRR ${r.xirr_pct.toFixed(0)}%` : ''}</span>
+                        <span>{r.return_on_margin_pct != null ? `RoM ${r.return_on_margin_pct.toFixed(0)}%` : ''}</span>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -871,6 +910,7 @@ export default function Backtest() {
                 </tbody>
               </table>
             </div>
+            )}
           </CardContent>
         </Card>
       )}
