@@ -287,3 +287,44 @@ def auto_run_active():
     from services.strategy_config_service import auto_run_all_active
     results = auto_run_all_active()
     return jsonify({"status": "success", "results": results})
+
+
+@backtest_bp.route("/api/strategy-overview", methods=["GET"])
+def strategy_overview():
+    """List all strategies with their config + latest backtest performance merged."""
+    from services.strategy_config_service import list_strategy_configs
+    from database.backtest_db import list_backtest_runs
+
+    configs = list_strategy_configs()
+    runs = list_backtest_runs(limit=200)
+
+    # Index latest run per strategy name
+    latest_by_strategy: dict = {}
+    for r in runs:
+        sname = r.get("strategy", "")
+        if sname not in latest_by_strategy:
+            latest_by_strategy[sname] = r
+
+    result = []
+    for c in configs:
+        perf = latest_by_strategy.get(c["name"], {})
+        result.append({
+            **c,
+            "run_id": perf.get("id"),
+            "net_pnl": perf.get("net_pnl"),
+            "fees_total": perf.get("fees_total"),
+            "n_trades": perf.get("n_trades"),
+            "sharpe": perf.get("sharpe"),
+            "max_drawdown_pct": perf.get("max_drawdown_pct"),
+            "xirr_pct": perf.get("xirr_pct"),
+            "return_on_margin_pct": perf.get("return_on_margin_pct"),
+            "capital": perf.get("capital"),
+            "symbol": perf.get("symbol"),
+            "interval": perf.get("interval"),
+            "n_bars": perf.get("n_bars"),
+            "created_at": perf.get("created_at"),
+        })
+
+    active = [r for r in result if r["is_active"]]
+    inactive = [r for r in result if not r["is_active"]]
+    return jsonify({"status": "success", "active": active, "inactive": inactive, "all": result})

@@ -214,3 +214,25 @@ export async function deactivateStrategy(key: string): Promise<unknown> {
   const { data } = await webClient.post(`/backtest/api/strategy-configs/${key}/deactivate`)
   return data
 }
+
+// Strategy overview (config + latest backtest performance merged)
+export interface StrategyOverview extends StrategyConfig {
+  run_id: number | null
+  net_pnl: number | null
+  fees_total: number | null
+  n_trades: number | null
+  sharpe: number | null
+  max_drawdown_pct: number | null
+  xirr_pct: number | null
+  return_on_margin_pct: number | null
+  capital: number | null
+  symbol: string | null
+  interval: string | null
+  n_bars: number | null
+  created_at: string | null
+}
+
+export async function getStrategyOverview(): Promise<{ active: StrategyOverview[]; inactive: StrategyOverview[]; all: StrategyOverview[] }> {
+  const { data } = await webClient.get<{ active: StrategyOverview[]; inactive: StrategyOverview[]; all: StrategyOverview[] }>('/backtest/api/strategy-overview')
+  return data
+}
