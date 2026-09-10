@@ -652,34 +652,48 @@ def get_auth_token(name, bypass_cache: bool = False):
 
     cache_key = f"auth-{name}"
 
+    # Cache the decrypted token STRING, never the Auth ORM instance. A cached
+    # Auth object becomes detached once the SQLAlchemy session that loaded it
+    # closes, so a later request reading auth_obj.is_revoked / .auth raises
+    # DetachedInstanceError (this 500'd the dashboard right after login). We
+    # still tolerate an Auth instance left in the cache by other populators
+    # (e.g. cache_restoration) — read it defensively, then replace with a
+    # string on the next miss.
+    def _cached_token(value):
+        if isinstance(value, str):
+            return value
+        try:
+            if isinstance(value, Auth) and not value.is_revoked:
+                return decrypt_token(value.auth)
+        except Exception:
+            pass  # detached / stale instance — treat as a miss
+        return None
+
     # Bypass cache if requested (e.g., after 403 error for fresh token)
     if bypass_cache:
         logger.debug(f"Bypassing cache for user: {name} (fresh token requested)")
-        # Clear stale cache entry
         if cache_key in auth_cache:
             del auth_cache[cache_key]
-        # Query database directly
         auth_obj = get_auth_token_dbquery(name)
         if isinstance(auth_obj, Auth) and not auth_obj.is_revoked:
-            # Update cache with fresh data
-            auth_cache[cache_key] = auth_obj
-            return decrypt_token(auth_obj.auth)
+            token = decrypt_token(auth_obj.auth)
+            auth_cache[cache_key] = token
+            return token
         return None
 
     # Normal cache-first lookup
     if cache_key in auth_cache:
-        auth_obj = auth_cache[cache_key]
-        if isinstance(auth_obj, Auth) and not auth_obj.is_revoked:
-            return decrypt_token(auth_obj.auth)
-        else:
-            del auth_cache[cache_key]
-            return None
-    else:
-        auth_obj = get_auth_token_dbquery(name)
-        if isinstance(auth_obj, Auth) and not auth_obj.is_revoked:
-            auth_cache[cache_key] = auth_obj
-            return decrypt_token(auth_obj.auth)
-        return None
+        token = _cached_token(auth_cache[cache_key])
+        if token is not None:
+            return token
+        del auth_cache[cache_key]  # detached/revoked — fall through to a fresh query
+
+    auth_obj = get_auth_token_dbquery(name)
+    if isinstance(auth_obj, Auth) and not auth_obj.is_revoked:
+        token = decrypt_token(auth_obj.auth)
+        auth_cache[cache_key] = token
+        return token
+    return None
 
 
 def get_auth_token_fresh(name):

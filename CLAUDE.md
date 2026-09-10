@@ -189,6 +189,17 @@ they are generated at `/apikey` and hashed with pepper before storage.
 anything: `uv run app.py`, `uv run python script.py`, `uv run pytest test/ -v`,
 `uv add package`, `uv sync`. Python 3.12+.
 
+**Backtests are ALWAYS proper and ALWAYS persisted — never temporary.** Do not
+run throwaway/research backtests with saving disabled (`_save=False`). Every
+backtest a strategy is evaluated on must run the full flow and store its result
+to the `backtest_runs` table so it appears in the `/backtest` list with real
+PnL / trades / metrics. To evaluate a strategy, run it through
+`run_multi_instrument_backtest(...)` (or `auto_run_strategy(key, ALL_INSTRUMENTS,
+"15m", 10000, "zerodha")`) which saves; ad-hoc single-contract or basket scripts
+used for research must ALSO save (default `_save=True`). A strategy that has been
+backtested but shows empty columns in the UI is a policy violation, not an
+acceptable state.
+
 **Logging.** `logger = get_logger(__name__)` from `utils/logging.py` in every
 module. Error logging is always `logger.exception()` — it captures the traceback
 and routes it to the JSON handler. Never `import traceback` /

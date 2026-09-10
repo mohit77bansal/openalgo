@@ -222,6 +222,8 @@ export interface StrategyOverview extends StrategyConfig {
   fees_total: number | null
   n_trades: number | null
   sharpe: number | null
+  recent_sharpe: number | null
+  recent_pnl: number | null
   max_drawdown_pct: number | null
   xirr_pct: number | null
   return_on_margin_pct: number | null
@@ -230,6 +232,7 @@ export interface StrategyOverview extends StrategyConfig {
   interval: string | null
   n_bars: number | null
   created_at: string | null
+  is_favorite?: boolean
 }
 
 export async function getStrategyOverview(): Promise<{ active: StrategyOverview[]; inactive: StrategyOverview[]; all: StrategyOverview[] }> {

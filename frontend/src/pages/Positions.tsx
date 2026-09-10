@@ -1011,15 +1011,24 @@ export default function Positions() {
                                 {calculatePnlPercent(position).toFixed(2)}%
                               </TableCell>
                               <TableCell className="w-[60px] text-right">
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                                  onClick={() => handleClosePosition(position)}
-                                  aria-label={`Close ${position.symbol} position`}
-                                >
-                                  <X className="h-4 w-4" />
-                                </Button>
+                                {/* A netqty=0 position is already closed (only
+                                    realised P&L remains) — there's nothing to
+                                    square off, so don't offer a Close action. */}
+                                {(Number(position.quantity) || 0) !== 0 ? (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                    onClick={() => handleClosePosition(position)}
+                                    aria-label={`Close ${position.symbol} position`}
+                                  >
+                                    <X className="h-4 w-4" />
+                                  </Button>
+                                ) : (
+                                  <Badge variant="secondary" className="text-xs">
+                                    Closed
+                                  </Badge>
+                                )}
                               </TableCell>
                             </TableRow>
                           ))}

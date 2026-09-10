@@ -216,7 +216,9 @@ def place_order_with_auth(
         ))
         return False, error_response, 500
 
-    if res.status == 200:
+    # Angel (and other brokers) return HTTP 200 with body status=false for
+    # gateway-level rejections; a missing orderid is never a successful order.
+    if res.status == 200 and order_id:
         order_response_data = {"status": "success", "orderid": order_id}
 
         if emit_event:
@@ -238,10 +240,15 @@ def place_order_with_auth(
 
         return True, order_response_data, 200
     else:
-        message = (
-            response_data.get("message", "Failed to place order")
-            if isinstance(response_data, dict)
-            else "Failed to place order"
+        message = "Failed to place order"
+        if isinstance(response_data, dict):
+            message = response_data.get("message") or message
+            errorcode = response_data.get("errorcode")
+            if errorcode:
+                message = f"{message} (broker errorcode {errorcode})"
+        logger.error(
+            f"Order rejected by broker for {order_data.get('symbol')}/"
+            f"{order_data.get('exchange')}: http={res.status} response={response_data}"
         )
         error_response = {"status": "error", "message": message}
         bus.publish(OrderFailedEvent(

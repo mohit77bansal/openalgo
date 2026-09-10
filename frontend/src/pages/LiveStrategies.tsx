@@ -195,43 +195,131 @@ function LogsSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="w-full sm:max-w-lg">
         <SheetHeader>
-          <SheetTitle>Audit Log - {strategyName}</SheetTitle>
-          <SheetDescription>Trade actions and P&L snapshots</SheetDescription>
+          <SheetTitle>Activity - {strategyName}</SheetTitle>
+          <SheetDescription>Every evaluation, signal and order — newest first</SheetDescription>
         </SheetHeader>
-        <div className="mt-4 space-y-2 overflow-y-auto max-h-[calc(100vh-10rem)]">
+        <div className="mt-4 space-y-1.5 overflow-y-auto max-h-[calc(100vh-10rem)]">
           {isLoading && (
             <p className="text-sm text-muted-foreground py-8 text-center">Loading logs...</p>
           )}
           {!isLoading && logs.length === 0 && (
-            <p className="text-sm text-muted-foreground py-8 text-center">No logs yet</p>
+            <p className="text-sm text-muted-foreground py-8 text-center">No activity yet</p>
           )}
-          {logs.map((log, i) => (
-            <div
-              key={`${log.timestamp}-${i}`}
-              className="rounded-md border px-3 py-2 text-sm space-y-1"
-            >
-              <div className="flex items-center justify-between">
-                <span className="font-medium">{log.action}</span>
-                <span className="text-xs text-muted-foreground">
-                  {new Date(log.timestamp).toLocaleString('en-IN')}
-                </span>
+          {logs.map((log, i) => {
+            const d = parseDetails(log.details_json)
+            const time = new Date(log.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+            const date = new Date(log.timestamp).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })
+
+            if (log.action === 'EVAL') {
+              return (
+                <div key={`${log.timestamp}-${i}`} className="flex items-start gap-2 px-2 py-1 text-xs border-l-2 border-border/50">
+                  <span className="text-muted-foreground tabular-nums shrink-0 w-24">{date} {time}</span>
+                  {d?.price != null && <span className="tabular-nums font-medium shrink-0">{Number(d.price).toLocaleString('en-IN')}</span>}
+                  <span className="text-muted-foreground min-w-0">{d?.reason ?? 'evaluated'}</span>
+                </div>
+              )
+            }
+
+            const isOrder = log.action === 'ORDER_PLACED' || log.action === 'ORDER_FILLED'
+            const isError = log.action === 'ERROR' || log.action === 'RISK_TRIGGERED'
+            return (
+              <div
+                key={`${log.timestamp}-${i}`}
+                className={
+                  'rounded-md border px-3 py-2 text-sm space-y-1 ' +
+                  (isOrder ? 'border-emerald-500/40 bg-emerald-500/5' : isError ? 'border-rose-500/40 bg-rose-500/5' : '')
+                }
+              >
+                <div className="flex items-center justify-between">
+                  <span className="font-medium">{log.action}</span>
+                  <span className="text-xs text-muted-foreground">{date} {time}</span>
+                </div>
+                {d?.reason && <p className="text-xs text-muted-foreground">{d.reason}</p>}
+                {!d?.reason && log.details_json && (
+                  <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-all">
+                    {log.details_json}
+                  </pre>
+                )}
+                {log.pnl_at_action !== 0 && (
+                  <p className="text-xs tabular-nums">
+                    P&L:{' '}
+                    <span className={log.pnl_at_action >= 0 ? 'text-emerald-500' : 'text-rose-500'}>
+                      {formatPnl(log.pnl_at_action)}
+                    </span>
+                  </p>
+                )}
               </div>
-              {log.details_json && (
-                <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-all">
-                  {log.details_json}
-                </pre>
-              )}
-              <p className="text-xs tabular-nums">
-                P&L at action:{' '}
-                <span className={log.pnl_at_action >= 0 ? 'text-emerald-500' : 'text-rose-500'}>
-                  {formatPnl(log.pnl_at_action)}
-                </span>
-              </p>
-            </div>
-          ))}
+            )
+          })}
         </div>
       </SheetContent>
     </Sheet>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Live heartbeat — what the strategy saw on its last evaluation
+// ---------------------------------------------------------------------------
+
+interface EvalDetails {
+  price?: number | null
+  or_high?: number | null
+  or_low?: number | null
+  bars_collected?: number
+  reason?: string
+  action?: string | null
+}
+
+function parseDetails(raw: string | null | undefined): EvalDetails | null {
+  if (!raw) return null
+  try { return JSON.parse(raw) as EvalDetails } catch { return null }
+}
+
+function LiveHeartbeat({ strategyId, isRunning }: { readonly strategyId: number; readonly isRunning: boolean }) {
+  const { data } = useQuery({
+    queryKey: ['live', 'heartbeat', strategyId],
+    queryFn: () => fetchStrategyLogs(strategyId),
+    enabled: isRunning,
+    refetchInterval: isRunning ? 15_000 : false,
+  })
+
+  if (!isRunning) return null
+
+  const logs: readonly StrategyLog[] = data?.logs ?? []
+  const lastEval = logs.find((l) => l.action === 'EVAL')
+
+  if (!lastEval) {
+    return (
+      <div className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
+        Waiting for first evaluation... (polls every strategy interval)
+      </div>
+    )
+  }
+
+  const d = parseDetails(lastEval.details_json)
+  const ts = new Date(lastEval.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+
+  return (
+    <div className="rounded-md border bg-muted/30 px-3 py-2 space-y-1">
+      <div className="flex items-center justify-between text-xs">
+        <span className="flex items-center gap-1.5 font-medium">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+          </span>
+          Live — last checked {ts}
+        </span>
+        {d?.price != null && <span className="tabular-nums font-medium">{Number(d.price).toLocaleString('en-IN')}</span>}
+      </div>
+      {d?.reason && <p className="text-xs text-muted-foreground">{d.reason}</p>}
+      {(d?.or_high != null || d?.or_low != null) && (
+        <div className="flex gap-3 text-[10px] text-muted-foreground tabular-nums">
+          {d.or_low != null && <span>OR low: {Number(d.or_low).toFixed(0)}</span>}
+          {d.or_high != null && <span>OR high: {Number(d.or_high).toFixed(0)}</span>}
+          {d.bars_collected != null && <span>{d.bars_collected} bars</span>}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -317,6 +405,9 @@ function StrategyCard({ strategy }: { readonly strategy: LiveStrategy }) {
             <Stat label="Lots" value={String(strategy.lots)} />
             <Stat label="Started" value={formatTimestamp(strategy.started_at)} />
           </div>
+
+          {/* Live heartbeat: what the strategy saw on the last poll */}
+          <LiveHeartbeat strategyId={strategy.id} isRunning={strategy.status === 'RUNNING'} />
 
           {strategy.remarks && (
             <p className="text-xs text-muted-foreground italic">{strategy.remarks}</p>

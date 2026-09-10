@@ -27,7 +27,7 @@ logger = get_logger(__name__)
 # Safety flag — when True, orders are logged but never placed.
 # Set to False ONLY when you are ready for real live trading.
 # ---------------------------------------------------------------------------
-DRY_RUN = True
+DRY_RUN = False
 
 # IST timezone for all market-time checks
 IST = pytz.timezone("Asia/Kolkata")
@@ -86,7 +86,7 @@ def start_live_strategy(strategy_id: int) -> dict[str, Any]:
         return {"status": "error", "message": "Associated account is not active"}
 
     # Validate strategy_key exists in the registry
-    from services.backtest_service import STRATEGY_REGISTRY
+    from services.strategies import STRATEGY_REGISTRY
 
     if strat["strategy_key"] not in STRATEGY_REGISTRY:
         return {
@@ -421,7 +421,7 @@ def _strategy_runner(strategy_id: int, stop_event: threading.Event) -> None:
         update_strategy_pnl,
         update_strategy_status,
     )
-    from services.backtest_service import STRATEGY_REGISTRY
+    from services.strategies import STRATEGY_REGISTRY
 
     logger.info(f"Strategy runner thread started for strategy_id={strategy_id}")
 
@@ -446,8 +446,20 @@ def _strategy_runner(strategy_id: int, stop_event: threading.Event) -> None:
             log_action(strategy_id, "ERROR", {"reason": f"Unknown strategy key: {strategy_key}"})
             return
 
-        # Price history for the strategy
-        price_history: list[dict[str, float]] = []
+        # Price history for the strategy. Prefill with today's 1m bars so
+        # window-based strategies (ORB opening range, Donchian channel) see
+        # the full session even when the server starts mid-day.
+        price_history: list[dict[str, float]] = _backfill_today_bars(symbol, exchange)
+        if price_history:
+            logger.info(
+                f"Strategy {strategy_id}: backfilled {len(price_history)} bars "
+                f"of today's 1m history for {symbol}"
+            )
+            log_action(strategy_id, "EVAL", {
+                "reason": f"Backfilled {len(price_history)} bars of today's session history",
+                "bars_collected": len(price_history),
+                "price": price_history[-1].get("close") if price_history else None,
+            })
 
         while not stop_event.is_set():
             try:
@@ -467,22 +479,41 @@ def _strategy_runner(strategy_id: int, stop_event: threading.Event) -> None:
                     logger.warning(
                         f"Strategy {strategy_id}: failed to fetch price for {symbol}"
                     )
+                    log_action(strategy_id, "EVAL", {
+                        "reason": f"Price fetch failed for {symbol} — will retry next poll",
+                        "price": None,
+                    })
                     stop_event.wait(timeout=interval_sec)
                     continue
 
                 price_history.append(latest)
 
-                # Keep a rolling window (max 200 bars)
-                if len(price_history) > 200:
-                    price_history = price_history[-200:]
+                # Keep a rolling window that holds a FULL trading session
+                # (9:15-15:30 = 375 one-minute bars). A smaller cap silently
+                # drops the morning bars after a mid-day restart, which blinds
+                # ORB to the opening range it backfilled.
+                if len(price_history) > 400:
+                    price_history = price_history[-400:]
 
-                # Generate signal from the strategy
+                # Generate signal from the strategy. Generators return a
+                # diagnostics dict every poll; "action" is set only on signal.
                 signal = _generate_signal(
-                    registry_entry, symbol, exchange, price_history
+                    registry_entry, symbol, exchange, price_history,
+                    trades_today=_count_orders_today(strategy_id),
                 )
 
-                if signal:
+                # Heartbeat: record what the strategy saw this poll, signal or not
+                eval_details = dict(signal) if isinstance(signal, dict) else {}
+                eval_details.setdefault("price", latest.get("close"))
+                eval_details.setdefault("bars_collected", len(price_history))
+                eval_details.setdefault("reason", "No signal")
+                log_action(strategy_id, "EVAL", eval_details)
+                from database.live_strategy_db import prune_eval_logs
+                prune_eval_logs(strategy_id)
+
+                if isinstance(signal, dict) and signal.get("action"):
                     update_last_signal(strategy_id)
+                    is_options = "options" in strategy_key or "option" in strategy_key
                     _handle_signal(
                         strategy_id=strategy_id,
                         signal=signal,
@@ -490,6 +521,7 @@ def _strategy_runner(strategy_id: int, stop_event: threading.Event) -> None:
                         exchange=exchange,
                         lots=strat["lots"],
                         api_key_ref=api_key_ref,
+                        is_options=is_options,
                     )
 
             except Exception as e:
@@ -538,6 +570,43 @@ def _stop_strategy_thread(strategy_id: int) -> None:
         _stop_events.pop(strategy_id, None)
 
 
+def _backfill_today_bars(symbol: str, exchange: str) -> list[dict[str, float]]:
+    """Fetch today's 1m bars from the broker so a mid-day start still sees
+    the opening range. Returns [] on any failure — the runner then builds
+    history from live polls as before.
+    """
+    try:
+        import os
+        import pandas as pd
+        from database.auth_db import get_auth_token
+        from broker.angel.api.data import BrokerData
+
+        auth_token = get_auth_token(os.getenv("BROKER_API_KEY", ""))
+        if not auth_token:
+            return []
+
+        now_ist = datetime.now(IST)
+        day = now_ist.strftime("%Y-%m-%d")
+        bd = BrokerData(auth_token)
+        df = bd.get_history(symbol, exchange, "1m", f"{day} 09:15", now_ist.strftime("%Y-%m-%d %H:%M"))
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            return []
+
+        bars: list[dict[str, float]] = []
+        for row in df.itertuples(index=False):
+            ts = datetime.fromtimestamp(int(row.timestamp), tz=IST)
+            bars.append({
+                "open": float(row.open), "high": float(row.high),
+                "low": float(row.low), "close": float(row.close),
+                "volume": float(getattr(row, "volume", 0) or 0),
+                "timestamp": ts.isoformat(),
+            })
+        return bars[-375:]
+    except Exception as e:
+        logger.debug(f"Backfill failed for {symbol}: {e}")
+        return []
+
+
 def _fetch_latest_price(
     symbol: str, exchange: str, api_key_ref: str | None
 ) -> dict[str, float] | None:
@@ -571,34 +640,51 @@ def _fetch_latest_price(
     return None
 
 
+def _count_orders_today(strategy_id: int) -> int:
+    """Count ORDER_PLACED entries for this strategy today (IST)."""
+    try:
+        from database.live_strategy_db import get_strategy_logs
+        today = datetime.now(IST).date().isoformat()
+        logs = get_strategy_logs(strategy_id, limit=600)
+        return sum(
+            1 for entry in logs
+            if entry.get("action") == "ORDER_PLACED"
+            and str(entry.get("timestamp") or "").startswith(today)
+        )
+    except Exception:
+        return 0
+
+
 def _generate_signal(
     registry_entry: dict[str, Any],
     symbol: str,
     exchange: str,
     price_history: list[dict[str, float]],
+    trades_today: int = 0,
 ) -> dict[str, Any] | None:
     """Run the strategy's signal generation logic on the price history.
 
+    Uses actual Donchian channel breakout for donchian_* strategies,
+    falls back to SMA crossover for others.
+
     Returns a signal dict {"action": "BUY"|"SELL", ...} or None.
     """
-    if len(price_history) < 5:
-        return None  # Not enough data
-
     try:
-        closes = [bar["close"] for bar in price_history]
-        highs = [bar["high"] for bar in price_history]
-        lows = [bar["low"] for bar in price_history]
+        strategy_name = registry_entry.get("name", "").lower()
 
-        # Simple signal generation based on the last few bars.
-        # The full strategy factory from STRATEGY_REGISTRY produces a qbacktest
-        # Strategy object designed for the event-driven engine. Here we use a
-        # simplified heuristic: the strategy's last-bar logic applied to the
-        # price history. For production, this should be replaced with the full
-        # engine step-through approach.
-        #
-        # For now: detect a simple crossover pattern using closing prices.
-        # If close crosses above the 20-bar SMA -> BUY
-        # If close crosses below the 20-bar SMA -> SELL
+        # ORB manages its own warm-up diagnostics (it can evaluate from bar 1)
+        if "orb" in strategy_name or "opening range" in strategy_name:
+            from services.options_signal_service import generate_orb_signal
+            return generate_orb_signal(price_history, trades_today=trades_today)
+
+        if len(price_history) < 5:
+            return {"action": None, "reason": f"Warming up: {len(price_history)} bars collected (need 5+)"}
+
+        if "donchian" in strategy_name:
+            from services.options_signal_service import generate_donchian_signal
+            return generate_donchian_signal(price_history, lookback=20)
+
+        closes = [bar["close"] for bar in price_history]
         sma_period = min(20, len(closes) - 1)
         if sma_period < 3:
             return None
@@ -633,23 +719,49 @@ def _handle_signal(
     exchange: str,
     lots: int,
     api_key_ref: str | None,
+    is_options: bool = False,
 ) -> None:
-    """Handle a generated signal: place order (or dry-run log it)."""
+    """Handle a generated signal: place order (or dry-run log it).
+
+    When is_options=True, the signal on the underlying is translated into
+    an ATM option contract order (BUY signal -> buy CE, SELL -> buy PE).
+    """
     from database.live_strategy_db import log_action, update_strategy_pnl
 
     action = signal.get("action", "").upper()
     price = signal.get("price", 0)
     reason = signal.get("reason", "")
 
-    order_data = {
-        "symbol": symbol,
-        "exchange": exchange,
-        "action": action,
-        "quantity": lots,
-        "product": "MIS",
-        "pricetype": "MARKET",
-        "price": 0,  # MARKET order
-    }
+    if is_options:
+        from services.options_signal_service import build_option_order
+        underlying = symbol.replace("FUT", "").rstrip("0123456789").rstrip("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+        for prefix in ["BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTY"]:
+            if symbol.upper().startswith(prefix):
+                underlying = prefix
+                break
+        opt_order = build_option_order(
+            underlying=underlying,
+            spot_price=price,
+            direction=action,
+            capital=10000,
+        )
+        if opt_order:
+            order_data = opt_order
+            reason = f"{reason} -> {opt_order['symbol']}"
+        else:
+            logger.warning(f"Strategy {strategy_id}: could not resolve option contract for {action} @ {price}")
+            log_action(strategy_id, "ERROR", {"reason": f"Option symbol resolution failed for {action} @ {price}"})
+            return
+    else:
+        order_data = {
+            "symbol": symbol,
+            "exchange": exchange,
+            "action": action,
+            "quantity": lots,
+            "product": "MIS",
+            "pricetype": "MARKET",
+            "price": 0,
+        }
 
     if DRY_RUN:
         logger.info(

@@ -213,12 +213,19 @@ def map_trade_data(trade_data):
 def transform_tradebook_data(tradebook_data):
     transformed_data = []
     for trade in tradebook_data:
+        # AngelOne's tradebook carries the executed quantity in "fillsize"
+        # (there is no "quantity" key), so the old mapping silently defaulted
+        # every trade's qty to 0. "marketlot" is the contract lot size, exposed
+        # so the UI can show F&O quantity in lots (qty / lotsize).
+        qty = _to_int(trade.get("fillsize", trade.get("quantity", 0)))
+        lotsize = _to_int(trade.get("marketlot", 1)) or 1
         transformed_trade = {
             "symbol": trade.get("tradingsymbol", ""),
             "exchange": trade.get("exchange", ""),
             "product": trade.get("producttype", ""),
             "action": trade.get("transactiontype", ""),
-            "quantity": trade.get("quantity", 0),
+            "quantity": qty,
+            "lotsize": lotsize,
             "average_price": trade.get("fillprice", 0.0),
             "trade_value": trade.get("tradevalue", 0),
             "orderid": trade.get("orderid", ""),

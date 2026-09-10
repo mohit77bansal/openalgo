@@ -57,6 +57,7 @@ from .synthetic_future import api as synthetic_future_ns
 from .telegram_bot import api as telegram_ns
 from .ticker import api as ticker_ns
 from .tradebook import api as tradebook_ns
+from .tradebook_analysis import api as tradebook_analysis_ns
 from .whatsapp_bot import api as whatsapp_ns
 
 # Add namespaces
@@ -77,6 +78,7 @@ api.add_namespace(intervals_ns, path="/intervals")
 api.add_namespace(funds_ns, path="/funds")
 api.add_namespace(orderbook_ns, path="/orderbook")
 api.add_namespace(tradebook_ns, path="/tradebook")
+api.add_namespace(tradebook_analysis_ns, path="/tradebookanalysis")
 api.add_namespace(positionbook_ns, path="/positionbook")
 api.add_namespace(holdings_ns, path="/holdings")
 api.add_namespace(basket_order_ns, path="/basketorder")

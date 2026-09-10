@@ -35,7 +35,7 @@ from utils.email_debug import debug_smtp_connection
 from utils.email_utils import send_password_reset_email, send_test_email
 from utils.ip_helper import get_real_ip
 from utils.logging import get_logger
-from utils.session import check_session_validity, is_session_valid, revoke_user_tokens
+from utils.session import check_session_validity, is_session_valid, revoke_user_tokens, set_session_login_time
 
 # Initialize logger
 logger = get_logger(__name__)
@@ -273,6 +273,65 @@ def _try_resume_broker_session(username):
         return None
 
 
+def _try_env_broker_autologin(username):
+    """Auto-connect the broker from .env credentials after a normal OpenAlgo
+    login, so the user never has to run the broker OAuth flow by hand.
+
+    This runs INSIDE the login request (unlike the background boot auto-auth,
+    which has no request context and therefore can't set ``session["broker"]``
+    — the root cause of the recurring "Broker not set in session" error). It
+    mirrors the manual broker-login side effects through handle_auth_success:
+    sets session["broker"], stores the feed token, registers the browser
+    session, and kicks the master-contract refresh.
+
+    Wired for AngelOne (the project's primary broker); reads
+    ANGELONE_CLIENT_CODE / ANGELONE_PIN / ANGELONE_TOTP_SECRET. Returns a
+    resume-style JSON response on success, or None to fall through to the
+    manual broker OAuth page.
+    """
+    import os
+
+    client_code = os.getenv("ANGELONE_CLIENT_CODE", "")
+    pin = os.getenv("ANGELONE_PIN", "")
+    totp_secret = os.getenv("ANGELONE_TOTP_SECRET", "")
+    if not (client_code and pin and totp_secret):
+        return None
+    try:
+        import pyotp
+
+        from broker.angel.api.auth_api import authenticate_broker
+
+        auth_token, feed_token, error = authenticate_broker(
+            client_code, pin, pyotp.TOTP(totp_secret).now()
+        )
+        if not auth_token:
+            logger.warning(f"[env-broker-autologin] AngelOne auth failed: {error}")
+            return None
+
+        from utils.auth_utils import handle_auth_success
+
+        handle_auth_success(
+            auth_token=auth_token,
+            user_session_key=username,
+            broker="angel",
+            feed_token=feed_token,
+            user_id=client_code,
+        )
+        logger.info(f"[env-broker-autologin] AngelOne connected for {username}")
+        return jsonify({
+            "status": "success",
+            "message": "Broker connected from .env",
+            "redirect": "/dashboard",
+            "broker": "angel",
+        }), 200
+    except Exception as e:
+        logger.error(f"[env-broker-autologin] error: {e}", exc_info=True)
+        session.pop("logged_in", None)
+        session.pop("broker", None)
+        session.pop("session_id", None)
+        return None
+
+
 @auth_bp.route("/login", methods=["GET", "POST"])
 @limiter.limit(LOGIN_RATE_LIMIT_MIN)
 @limiter.limit(LOGIN_RATE_LIMIT_HOUR)
@@ -348,8 +407,19 @@ def login():
                                   login_type="resume", broker=session.get("broker"))
                 return resumed
 
+            # No resumable broker token — connect the broker straight from .env
+            # so the user skips the manual broker OAuth step entirely.
+            env_login = _try_env_broker_autologin(username)
+            if env_login:
+                logger.info("[LOGIN] Broker auto-connected from .env")
+                from database.auth_db import log_login_attempt
+                log_login_attempt(username, ip, ua, status="success",
+                                  login_type="env_broker", broker=session.get("broker"))
+                return env_login
+
             # No valid broker session — user is still authenticated (broker optional)
             session["logged_in"] = True
+            set_session_login_time()
             logger.info("[LOGIN] No broker session, but user is authenticated — going to dashboard")
             from database.auth_db import log_login_attempt
             log_login_attempt(username, ip, ua, status="success", login_type="password")
@@ -449,6 +519,15 @@ def login_totp():
             login_type="totp_resume", broker=session.get("broker"),
         )
         return resumed
+
+    # Fall back to connecting the broker straight from .env (same as plain login).
+    env_login = _try_env_broker_autologin(pending_username)
+    if env_login:
+        log_login_attempt(
+            pending_username, ip, ua, status="success",
+            login_type="totp_env_broker", broker=session.get("broker"),
+        )
+        return env_login
 
     log_login_attempt(pending_username, ip, ua, status="success", login_type="totp")
     return jsonify({"status": "success"}), 200

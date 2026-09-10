@@ -81,6 +81,7 @@ from blueprints.oiprofile import oiprofile_bp  # Import the OI Profile blueprint
 from blueprints.oitracker import oitracker_bp  # Import the OI tracker blueprint
 from blueprints.orders import orders_bp
 from blueprints.paper_trading import paper_trading_bp  # Paper trading automation + risk
+from blueprints.order_tags import order_tags_bp  # User order annotations (type + description)
 from blueprints.platforms import platforms_bp
 from blueprints.live_strategy import live_strategy_bp  # Live strategy execution
 from blueprints.strategies import strategies_bp  # Automated strategy management
@@ -288,6 +289,7 @@ def create_app():
     csrf.exempt(api_v1_bp)
     csrf.exempt(backtest_bp)
     csrf.exempt(paper_trading_bp)
+    csrf.exempt(order_tags_bp)
     csrf.exempt(live_strategy_bp)
     csrf.exempt(strategies_bp)
 
@@ -349,6 +351,7 @@ def create_app():
     app.register_blueprint(postback_bp)  # Register broker postback (order-update webhook) blueprint
     app.register_blueprint(backtest_bp)  # Register aladin backtesting module
     app.register_blueprint(paper_trading_bp)  # Register paper trading + risk blueprint
+    app.register_blueprint(order_tags_bp)  # Register order tags (type + description) blueprint
     app.register_blueprint(scanner_bp)  # Register NIFTY F&O arb scanner blueprint
     app.register_blueprint(live_strategy_bp)  # Register live strategy execution
     app.register_blueprint(strategies_bp)  # Register automated strategy management
@@ -502,6 +505,167 @@ def create_app():
 
         start_order_update_adapters_on_boot(db_ready=app.db_ready)
 
+        # Auto-authenticate AngelOne from .env + auto-resume live strategies
+        def _auto_auth_and_resume():
+            try:
+                app.db_ready.wait(timeout=30)
+
+                # Auto-auth AngelOne if credentials are in .env
+                client_code = os.getenv("ANGELONE_CLIENT_CODE", "")
+                pin = os.getenv("ANGELONE_PIN", "")
+                totp_secret = os.getenv("ANGELONE_TOTP_SECRET", "")
+                if client_code and pin and totp_secret:
+                    try:
+                        import pyotp
+                        from broker.angel.api.auth_api import authenticate_broker
+                        totp = pyotp.TOTP(totp_secret).now()
+                        auth_token, feed_token, error = authenticate_broker(client_code, pin, totp)
+                        if auth_token:
+                            from database.auth_db import register_session, upsert_auth
+                            api_key = os.getenv("BROKER_API_KEY", "")
+                            # feed_token is required by the market-data WS
+                            # adapters (angel_adapter.initialize raises "No
+                            # authentication tokens found" without it).
+                            upsert_auth(api_key, auth_token, "angel", feed_token=feed_token)
+                            # Also store under the OpenAlgo username so the
+                            # quotes/order services (which resolve OpenAlgo
+                            # API key -> username -> token) find it.
+                            login_user = os.getenv("LOGIN_USERNAME", "mohit")
+                            upsert_auth(
+                                login_user, auth_token, "angel",
+                                feed_token=feed_token, revoke=False,
+                            )
+                            # Mirror the interactive login flow
+                            # (utils.auth_utils.handle_auth_success) so
+                            # background services see a real login:
+                            # has_login_this_trading_session() reads active
+                            # sessions to gate order-update adapters at boot.
+                            import secrets
+
+                            # Keep auto-auth from crowding the capped
+                            # active-session list and evicting the user's real
+                            # browser session — drop our own prior auto-auth /
+                            # daily-reauth rows before adding a fresh one.
+                            try:
+                                from database.auth_db import ActiveSession
+                                from database.auth_db import db_session as _asess
+                                ActiveSession.query.filter(
+                                    ActiveSession.username == login_user,
+                                    ActiveSession.device_info.in_(
+                                        ["auto-auth (.env credentials)", "daily auto-reauth"]
+                                    ),
+                                ).delete(synchronize_session=False)
+                                _asess.commit()
+                            except Exception:
+                                logger.warning("auto-auth session cleanup skipped", exc_info=True)
+                            register_session(
+                                username=login_user,
+                                session_id=secrets.token_hex(32),
+                                device_info="auto-auth (.env credentials)",
+                                ip_address=None,
+                                broker="angel",
+                            )
+                            # Refresh the master contract when stale (the
+                            # interactive login does this too); stale symbol
+                            # tokens make the broker reject orders on newly
+                            # listed contracts.
+                            from utils.auth_utils import (
+                                async_master_contract_download,
+                                should_download_master_contract,
+                            )
+                            should_download, reason = should_download_master_contract("angel")
+                            if should_download:
+                                _th.Thread(
+                                    target=async_master_contract_download,
+                                    args=("angel",),
+                                    daemon=True,
+                                ).start()
+                                logger.info(f"Master contract refresh started: {reason}")
+                            logger.info("Auto-authenticated AngelOne from .env credentials")
+                        else:
+                            logger.warning(f"AngelOne auto-auth failed: {error}")
+                    except Exception as e:
+                        logger.warning(f"AngelOne auto-auth error: {e}")
+
+                # Resume RUNNING strategies. Their threads died with the old
+                # process but the DB still says RUNNING, which makes
+                # start_live_strategy refuse — reset to PAUSED first.
+                from database.live_strategy_db import list_live_strategies, update_strategy_status
+                from services.live_strategy_service import start_live_strategy
+                strategies = list_live_strategies()
+                for s in strategies:
+                    if s.get("status") == "RUNNING":
+                        update_strategy_status(s["id"], "PAUSED")
+                        result = start_live_strategy(s["id"])
+                        logger.info(f"Auto-resumed live strategy {s['id']} ({s['strategy_key']}): {result.get('status')}")
+            except Exception as e:
+                logger.warning(f"Auto-auth/resume failed: {e}")
+
+        _th.Thread(target=_auto_auth_and_resume, daemon=True, name="AutoAuthResume").start()
+
+        # Daily AngelOne re-auth. Broker tokens die at the ~03:00 IST rollover,
+        # and boot-time auto-auth only covers the session the app started in. A
+        # process that stays up for days would then run on a dead token all day
+        # — silently breaking order placement, the orderbook/positions views,
+        # quotes and the options collector (this bit us repeatedly). This thread
+        # refreshes the token every morning at 08:45 IST, before the 09:15 open,
+        # so a long-running app always trades on a live token.
+        def _daily_reauth_loop():
+            import time as _time
+            from datetime import datetime, timedelta, timezone
+
+            IST = timezone(timedelta(hours=5, minutes=30))
+            client_code = os.getenv("ANGELONE_CLIENT_CODE", "")
+            pin = os.getenv("ANGELONE_PIN", "")
+            totp_secret = os.getenv("ANGELONE_TOTP_SECRET", "")
+            if not (client_code and pin and totp_secret):
+                return
+            while True:
+                now = datetime.now(IST)
+                target = now.replace(hour=8, minute=45, second=0, microsecond=0)
+                if target <= now:
+                    target += timedelta(days=1)
+                _time.sleep(max(60, (target - now).total_seconds()))
+                if datetime.now(IST).weekday() >= 5:   # skip Sat/Sun
+                    continue
+                try:
+                    import secrets
+
+                    import pyotp
+                    from broker.angel.api.auth_api import authenticate_broker
+                    from database.auth_db import register_session, upsert_auth
+
+                    totp = pyotp.TOTP(totp_secret).now()
+                    auth_token, feed_token, error = authenticate_broker(client_code, pin, totp)
+                    if auth_token:
+                        api_key = os.getenv("BROKER_API_KEY", "")
+                        login_user = os.getenv("LOGIN_USERNAME", "mohit")
+                        upsert_auth(api_key, auth_token, "angel", feed_token=feed_token)
+                        upsert_auth(login_user, auth_token, "angel",
+                                    feed_token=feed_token, revoke=False)
+                        register_session(username=login_user, session_id=secrets.token_hex(32),
+                                         device_info="daily auto-reauth", ip_address=None,
+                                         broker="angel")
+                        logger.info("Daily AngelOne re-auth succeeded")
+                    else:
+                        logger.warning(f"Daily AngelOne re-auth failed: {error}")
+                except Exception as e:
+                    logger.warning(f"Daily AngelOne re-auth error: {e}")
+
+        _th.Thread(target=_daily_reauth_loop, daemon=True, name="DailyReauth").start()
+
+        # Start options data collector (1m candle collection during market hours)
+        def _start_options_collector():
+            try:
+                app.db_ready.wait(timeout=30)
+                from services.options_data_collector import start_collector
+                start_collector()
+                logger.info("Options data collector started")
+            except Exception as e:
+                logger.warning(f"Options data collector failed to start: {e}")
+
+        _th.Thread(target=_start_options_collector, daemon=True, name="OptionsCollectorBoot").start()
+
         # NOTE: Python strategy scheduler is initialized in setup_environment()
         # AFTER database tables are created, to avoid "no such table" errors on fresh install
 
@@ -528,28 +692,21 @@ def create_app():
 
         from utils.session import is_session_valid, revoke_user_tokens
 
-        # Skip session check for static files, API endpoints, and public routes
+        # Skip session check for static files, API endpoints, public routes,
+        # and React SPA page routes (they just serve index.html; auth is
+        # handled client-side by AuthSync polling /auth/session-status).
+        from blueprints.react_app import is_react_frontend_available
         if (
             request.path.startswith("/static/")
             or request.path.startswith("/api/")
-            or request.path.startswith("/assets/")  # React frontend assets
-            or request.path
-            in [
-                "/",
-                "/auth/login",
-                "/auth/reset-password",
-                "/auth/csrf-token",
-                "/auth/broker-config",
-                "/auth/session-status",  # Session status check for React SPA
-                "/auth/check-setup",  # Setup check for React SPA
-                "/setup",
-                "/download",
-                "/faq",
-                "/login",  # React login page
-            ]
-            or request.path.startswith("/auth/broker/")  # OAuth callbacks
+            or request.path.startswith("/assets/")
+            or request.path.startswith("/auth/")
             or request.path.startswith("/_reload-ws")
-        ):  # WebSocket reload endpoint
+            or request.path
+            in ["/", "/setup", "/download", "/faq", "/login"]
+            or (is_react_frontend_available() and request.endpoint
+                and request.endpoint.startswith("react."))
+        ):
             return
 
         # Check if user is logged in and session is expired

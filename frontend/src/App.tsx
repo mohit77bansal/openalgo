@@ -217,6 +217,7 @@ function App() {
                 <Route path="/backtest" element={<Backtest />} />
                 <Route path="/backtest/new" element={<BacktestNew />} />
                 <Route path="/backtest/results" element={<BacktestResults />} />
+                <Route path="/backtest/results/:runId" element={<BacktestResults />} />
                 <Route path="/auto-strategies" element={<AutoStrategies />} />
                 <Route path="/trading" element={<Trading />} />
                 <Route path="/portfolio-analyzer" element={<PortfolioAnalyzer />} />

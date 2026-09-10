@@ -77,11 +77,20 @@ def create_account():
 @limiter.limit(API_RATE_LIMIT)
 def list_strategies():
     """List all live strategies with status."""
-    from database.live_strategy_db import list_live_strategies
+    from database.live_strategy_db import list_accounts, list_live_strategies
+    from services.strategies import STRATEGY_REGISTRY
 
     account_id = request.args.get("account_id", type=int)
     strategies = list_live_strategies(account_id=account_id)
-    return jsonify({"status": "success", "data": strategies})
+
+    accounts_by_id = {a["id"]: a for a in list_accounts()}
+    for s in strategies:
+        reg = STRATEGY_REGISTRY.get(s.get("strategy_key", ""), {})
+        s["strategy_name"] = reg.get("name", s.get("strategy_key", ""))
+        acc = accounts_by_id.get(s.get("account_id"))
+        s["account_name"] = acc["account_name"] if acc else "Unknown"
+
+    return jsonify({"status": "success", "strategies": strategies})
 
 
 @live_strategy_bp.route("/strategies", methods=["POST"])
@@ -199,11 +208,19 @@ def strategy_status(strategy_id):
 @limiter.limit(API_RATE_LIMIT)
 def strategy_logs(strategy_id):
     """Get audit logs for a live strategy."""
+    import json as _json
+
     from database.live_strategy_db import get_strategy_logs
 
     limit = request.args.get("limit", 100, type=int)
     logs = get_strategy_logs(strategy_id, limit=limit)
-    return jsonify({"status": "success", "data": logs})
+    # The React page reads `logs` and each entry's `details_json` string.
+    for entry in logs:
+        d = entry.get("details")
+        entry["details_json"] = (
+            _json.dumps(d) if isinstance(d, dict) else (d if isinstance(d, str) else None)
+        )
+    return jsonify({"status": "success", "logs": logs, "data": logs})
 
 
 # ---------------------------------------------------------------------------

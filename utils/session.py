@@ -60,10 +60,11 @@ def is_session_valid():
         logger.debug("Session invalid: 'logged_in' flag not set")
         return False
 
-    # If no login time is set, consider session invalid
+    # If no login time is set, set it now (self-heal for sessions created
+    # before the set_session_login_time fix) rather than invalidating
     if "login_time" not in session:
-        logger.debug("Session invalid: 'login_time' not in session")
-        return False
+        set_session_login_time()
+        logger.debug("Session missing login_time — self-healed to now")
 
     # Skip expiry check for crypto brokers (24/7 markets) or when no broker is connected
     if is_session_expiry_disabled():

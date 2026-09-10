@@ -36,7 +36,7 @@ import { useSupportedExchanges } from '@/hooks/useSupportedExchanges'
 import { cn, makeFormatCurrency, sanitizeCSV } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
 import { onModeChange } from '@/stores/themeStore'
-import type { Trade } from '@/types/trading'
+import type { Trade, TradebookAnalysis } from '@/types/trading'
 import { showToast } from '@/utils/toast'
 
 interface FilterState {
@@ -106,6 +106,33 @@ export default function TradeBook() {
   const [isLoading, setIsLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // 'trades' = raw fills (existing view); 'roundtrips' = entry→exit consolidated
+  const [view, setView] = useState<'trades' | 'roundtrips'>('trades')
+
+  // Round-trips, fees, and the ledger are ALL computed server-side (same cost
+  // model as the backtester) — the frontend only renders them.
+  const [analysis, setAnalysis] = useState<TradebookAnalysis | null>(null)
+  const roundTrips = analysis?.roundtrips ?? []
+  const rtStats = analysis?.totals ?? {
+    count: 0,
+    gross_pnl: 0,
+    fees: 0,
+    net_pnl: 0,
+    wins: 0,
+    win_rate: 0,
+  }
+  const ledger = analysis?.ledger ?? null
+
+  // qty display: for F&O (lotsize > 1) show "qty (n lot)".
+  const formatQty = (qty: number, lotsize?: number): string => {
+    const ls = Number(lotsize) || 1
+    if (ls > 1) {
+      const lots = qty / ls
+      const lotStr = Number.isInteger(lots) ? `${lots}` : lots.toFixed(2)
+      return `${qty} (${lotStr} lot${lots === 1 ? '' : 's'})`
+    }
+    return `${qty}`
+  }
 
   // Filter state
   const [filters, setFilters] = useState<FilterState>({
@@ -184,12 +211,18 @@ export default function TradeBook() {
       if (showRefresh) setIsRefreshing(true)
 
       try {
-        const response = await tradingApi.getTrades(apiKey)
+        const [response, analysisResp] = await Promise.all([
+          tradingApi.getTrades(apiKey),
+          tradingApi.getTradebookAnalysis(apiKey).catch(() => null),
+        ])
         if (response.status === 'success' && response.data) {
           setTrades(response.data)
           setError(null)
         } else {
           setError(response.message || 'Failed to fetch trades')
+        }
+        if (analysisResp?.status === 'success' && analysisResp.data) {
+          setAnalysis(analysisResp.data)
         }
       } catch {
         setError('Failed to fetch trades')
@@ -300,6 +333,26 @@ export default function TradeBook() {
           <p className="text-muted-foreground">View your executed trades</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {/* View toggle: raw fills vs consolidated round-trips */}
+          <div className="inline-flex rounded-md border p-0.5">
+            <Button
+              variant={view === 'trades' ? 'default' : 'ghost'}
+              size="sm"
+              className="h-7"
+              onClick={() => setView('trades')}
+            >
+              Trades
+            </Button>
+            <Button
+              variant={view === 'roundtrips' ? 'default' : 'ghost'}
+              size="sm"
+              className="h-7"
+              onClick={() => setView('roundtrips')}
+            >
+              Round-trips
+            </Button>
+          </div>
+
           {/* Settings Button */}
           <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
             <DialogTrigger asChild>
@@ -439,7 +492,194 @@ export default function TradeBook() {
         </div>
       )}
 
+      {/* ===== Consolidated round-trip view ===== */}
+      {view === 'roundtrips' && (
+        <>
+          {/* Ledger — the ground truth: your actual broker balance vs the
+              starting capital. Net P&L here already nets every real charge. */}
+          {ledger && ledger.current_balance != null && (
+            <Card className={cn('border-2', ledger.is_loss ? 'border-red-500/40' : 'border-green-500/40')}>
+              <CardContent className="py-4">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                  <div>
+                    <div className="text-xs uppercase tracking-wider text-muted-foreground">
+                      Initial Capital
+                    </div>
+                    <div className="text-xl font-semibold">
+                      {formatCurrency(ledger.initial_capital)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs uppercase tracking-wider text-muted-foreground">
+                      Current Balance
+                    </div>
+                    <div className="text-xl font-semibold">
+                      {formatCurrency(ledger.current_balance)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs uppercase tracking-wider text-muted-foreground">
+                      Net P&L (actual)
+                    </div>
+                    <div
+                      className={cn(
+                        'text-xl font-bold',
+                        ledger.is_loss ? 'text-red-600' : 'text-green-600'
+                      )}
+                    >
+                      {ledger.net_pnl != null && ledger.net_pnl >= 0 ? '+' : ''}
+                      {formatCurrency(ledger.net_pnl ?? 0)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs uppercase tracking-wider text-muted-foreground">
+                      Return
+                    </div>
+                    <div
+                      className={cn(
+                        'text-xl font-bold',
+                        ledger.is_loss ? 'text-red-600' : 'text-green-600'
+                      )}
+                    >
+                      {ledger.net_pct != null && ledger.net_pct >= 0 ? '+' : ''}
+                      {(ledger.net_pct ?? 0).toFixed(2)}%
+                    </div>
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground text-center mt-3">
+                  Ledger = broker's actual balance (nets every real charge). Round-trip fees
+                  below are the broker's actual charges (AngelOne estimateCharges), with the
+                  backtester's cost model as fallback.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
+          <div className="grid gap-4 md:grid-cols-4">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardDescription>Round-trips</CardDescription>
+                <CardTitle className="text-2xl">{rtStats.count}</CardTitle>
+              </CardHeader>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardDescription>Net P&amp;L</CardDescription>
+                <CardTitle
+                  className={cn(
+                    'text-2xl',
+                    rtStats.net_pnl >= 0 ? 'text-green-600' : 'text-red-600'
+                  )}
+                >
+                  {formatCurrency(rtStats.net_pnl)}
+                </CardTitle>
+              </CardHeader>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardDescription>Total Fees</CardDescription>
+                <CardTitle className="text-2xl">{formatCurrency(rtStats.fees)}</CardTitle>
+              </CardHeader>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardDescription>Win Rate</CardDescription>
+                <CardTitle className="text-2xl">{rtStats.win_rate.toFixed(0)}%</CardTitle>
+              </CardHeader>
+            </Card>
+          </div>
+
+          <Card>
+            <CardContent className="py-0">
+              {isLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="h-8 w-8 animate-spin" />
+                </div>
+              ) : roundTrips.length === 0 ? (
+                <div className="text-center py-12 text-muted-foreground">
+                  No closed round-trips yet (an entry needs a matching exit)
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Symbol</TableHead>
+                        <TableHead>Side</TableHead>
+                        <TableHead className="text-right">Qty</TableHead>
+                        <TableHead className="text-right">Entry</TableHead>
+                        <TableHead className="text-right">Exit</TableHead>
+                        <TableHead className="text-right">Gross P&L</TableHead>
+                        <TableHead className="text-right">Fees</TableHead>
+                        <TableHead className="text-right">Net P&L</TableHead>
+                        <TableHead className="text-right">%</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {roundTrips.map((rt, index) => (
+                        <TableRow key={`${rt.symbol}-${rt.exit_time}-${index}`}>
+                          <TableCell className="font-medium">{rt.symbol}</TableCell>
+                          <TableCell>
+                            <Badge
+                              variant={rt.direction === 'LONG' ? 'default' : 'destructive'}
+                              className={cn(rt.direction === 'LONG' ? 'bg-green-500' : '')}
+                            >
+                              {rt.direction}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right font-mono">
+                            {rt.lots != null
+                              ? `${Number.isInteger(rt.lots) ? rt.lots : rt.lots.toFixed(2)} lot${rt.lots === 1 ? '' : 's'}`
+                              : rt.qty}
+                          </TableCell>
+                          <TableCell className="text-right font-mono">
+                            {formatCurrency(rt.entry_price)}
+                          </TableCell>
+                          <TableCell className="text-right font-mono">
+                            {formatCurrency(rt.exit_price)}
+                          </TableCell>
+                          <TableCell
+                            className={cn(
+                              'text-right font-mono',
+                              rt.gross_pnl >= 0 ? 'text-green-600' : 'text-red-600'
+                            )}
+                          >
+                            {formatCurrency(rt.gross_pnl)}
+                          </TableCell>
+                          <TableCell className="text-right font-mono text-muted-foreground">
+                            {formatCurrency(rt.fees)}
+                          </TableCell>
+                          <TableCell
+                            className={cn(
+                              'text-right font-mono font-semibold',
+                              rt.net_pnl >= 0 ? 'text-green-600' : 'text-red-600'
+                            )}
+                          >
+                            {formatCurrency(rt.net_pnl)}
+                          </TableCell>
+                          <TableCell
+                            className={cn(
+                              'text-right font-mono',
+                              rt.net_pct >= 0 ? 'text-green-600' : 'text-red-600'
+                            )}
+                          >
+                            {rt.net_pct >= 0 ? '+' : ''}
+                            {rt.net_pct.toFixed(2)}%
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </>
+      )}
+
       {/* Stats Cards */}
+      {view === 'trades' && (
+      <>
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
           <CardHeader className="pb-2">
@@ -569,7 +809,9 @@ export default function TradeBook() {
                           {trade.action}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-right font-mono">{trade.quantity}</TableCell>
+                      <TableCell className="text-right font-mono">
+                        {formatQty(trade.quantity, trade.lotsize)}
+                      </TableCell>
                       <TableCell className="text-right font-mono">
                         {formatCurrency(trade.average_price)}
                       </TableCell>
@@ -588,6 +830,8 @@ export default function TradeBook() {
           )}
         </CardContent>
       </Card>
+      </>
+      )}
     </div>
   )
 }

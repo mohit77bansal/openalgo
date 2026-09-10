@@ -11,8 +11,17 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
+
+# All wall-clock timestamps in this module are stored as IST (the app is
+# IST-centric): SQLite's func.now() would store UTC and the frontend would
+# render it verbatim, showing times 5.5 hours behind.
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _now_ist() -> datetime:
+    return datetime.now(IST).replace(tzinfo=None)
 
 from sqlalchemy import (
     Boolean,
@@ -64,7 +73,31 @@ VALID_LOG_ACTIONS = (
     "ORDER_FILLED",
     "RISK_TRIGGERED",
     "ERROR",
+    "EVAL",  # per-poll evaluation heartbeat: price seen, indicator state, verdict
 )
+
+
+def prune_eval_logs(strategy_id: int, keep: int = 500) -> None:
+    """Keep only the newest ``keep`` EVAL entries per strategy.
+
+    EVAL fires every poll (e.g. every 60s), so without pruning the audit
+    table would grow ~375 rows/day/strategy forever.
+    """
+    try:
+        cutoff_ids = [
+            row.id
+            for row in LiveStrategyLog.query.filter_by(strategy_id=strategy_id, action="EVAL")
+            .order_by(LiveStrategyLog.timestamp.desc())
+            .offset(keep)
+            .all()
+        ]
+        if cutoff_ids:
+            LiveStrategyLog.query.filter(LiveStrategyLog.id.in_(cutoff_ids)).delete(
+                synchronize_session=False
+            )
+            db_session.commit()
+    except Exception:
+        db_session.rollback()
 
 
 # ---------------------------------------------------------------------------
@@ -83,7 +116,7 @@ class LiveStrategyAccount(Base):
     client_code = Column(String(100), nullable=False)
     api_key_ref = Column(String(255), nullable=True)  # OpenAlgo API key ID
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=_now_ist)
     last_login_at = Column(DateTime(timezone=True), nullable=True)
 
 
@@ -112,7 +145,7 @@ class LiveStrategy(Base):
     total_fees = Column(Float, default=0.0)
     risk_config_json = Column(Text, nullable=True)  # JSON string of risk overrides
     remarks = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=_now_ist)
 
 
 class LiveStrategyLog(Base):
@@ -124,7 +157,7 @@ class LiveStrategyLog(Base):
     strategy_id = Column(
         Integer, ForeignKey("live_strategies.id"), nullable=False
     )
-    timestamp = Column(DateTime(timezone=True), server_default=func.now())
+    timestamp = Column(DateTime(timezone=True), default=_now_ist)
     action = Column(String(30), nullable=False)  # STARTED|PAUSED|RESUMED|...
     details_json = Column(Text, nullable=True)
     pnl_at_action = Column(Float, default=0.0)
@@ -267,7 +300,7 @@ def update_strategy_status(strategy_id: int, status: str) -> bool:
         if not strat:
             return False
         strat.status = status
-        now = func.now()
+        now = _now_ist()
         if status == "RUNNING":
             strat.started_at = now
         elif status == "PAUSED":
@@ -310,7 +343,7 @@ def update_last_signal(strategy_id: int) -> bool:
         strat = LiveStrategy.query.get(strategy_id)
         if not strat:
             return False
-        strat.last_signal_at = func.now()
+        strat.last_signal_at = _now_ist()
         db_session.commit()
         return True
     except Exception as e:

@@ -9,6 +9,7 @@ import type {
   PortfolioStats,
   Position,
   Trade,
+  TradebookAnalysis,
 } from '@/types/trading'
 import { apiClient, webClient } from './client'
 
@@ -176,6 +177,40 @@ export const tradingApi = {
   getTrades: async (apiKey: string): Promise<ApiResponse<Trade[]>> => {
     const response = await apiClient.post<ApiResponse<Trade[]>>('/tradebook', {
       apikey: apiKey,
+    })
+    return response.data
+  },
+
+  /**
+   * Consolidated round-trips + ledger — ALL P&L/fee math computed server-side
+   * with the same cost model the backtester uses (no frontend calculation).
+   */
+  getTradebookAnalysis: async (apiKey: string): Promise<ApiResponse<TradebookAnalysis>> => {
+    const response = await apiClient.post<ApiResponse<TradebookAnalysis>>('/tradebookanalysis', {
+      apikey: apiKey,
+    })
+    return response.data
+  },
+
+  /** User order annotations: { orderid: { tag_type, description } } + tag_types list. */
+  getOrderTags: async (
+    apiKey: string
+  ): Promise<ApiResponse<Record<string, { tag_type: string; description: string }>> & { tag_types?: string[] }> => {
+    const response = await apiClient.post('/ordertags/list', { apikey: apiKey })
+    return response.data
+  },
+
+  setOrderTag: async (
+    apiKey: string,
+    orderid: string,
+    tag_type: string,
+    description: string
+  ): Promise<ApiResponse<null>> => {
+    const response = await apiClient.post<ApiResponse<null>>('/ordertags/set', {
+      apikey: apiKey,
+      orderid,
+      tag_type,
+      description,
     })
     return response.data
   },

@@ -42,25 +42,52 @@ interface PersistedSettings {
   order: string[]
   visibility: VisibilityState
   pinned: string[]
+  sorting: SortingState
+}
+
+/** Merge a saved column order with the current column set: drop columns that no
+ *  longer exist, and splice in newly-added columns at their default position.
+ *  Without this, a column added to a table AFTER a user saved their layout is
+ *  silently absent from the saved order array and never renders. */
+function reconcileOrder(savedOrder: string[], defaultOrder: string[]): string[] {
+  const order = savedOrder.filter((id) => defaultOrder.includes(id))
+  defaultOrder.forEach((id, idx) => {
+    if (!order.includes(id)) order.splice(Math.min(idx, order.length), 0, id)
+  })
+  return order
+}
+
+/** Newly-added columns adopt their default pin state (the user never made a
+ *  choice about them). New default-pinned columns go left of existing pins. */
+function reconcilePinned(
+  savedPinned: string[], newColumns: string[], defaultOrder: string[], defaultPinned: string[],
+): string[] {
+  const freshPins = defaultPinned.filter((id) => newColumns.includes(id))
+  const keptPins = savedPinned.filter((id) => defaultOrder.includes(id) && !freshPins.includes(id))
+  return [...freshPins, ...keptPins]
 }
 
 function loadSettings(key: string, defaultOrder: string[], defaultPinned: string[]): PersistedSettings {
   try {
     const raw = localStorage.getItem(key)
-    if (!raw) return { order: defaultOrder, visibility: {}, pinned: defaultPinned }
+    if (!raw) return { order: defaultOrder, visibility: {}, pinned: defaultPinned, sorting: [] }
     const p = JSON.parse(raw) as Partial<PersistedSettings>
+    const savedOrder = Array.isArray(p.order) ? p.order : defaultOrder
+    const savedPinned = Array.isArray(p.pinned) ? p.pinned : defaultPinned
+    const newColumns = defaultOrder.filter((id) => !savedOrder.includes(id))
     return {
-      order: Array.isArray(p.order) ? p.order : defaultOrder,
+      order: reconcileOrder(savedOrder, defaultOrder),
       visibility: p.visibility && typeof p.visibility === 'object' ? p.visibility : {},
-      pinned: Array.isArray(p.pinned) ? p.pinned : defaultPinned,
+      pinned: reconcilePinned(savedPinned, newColumns, defaultOrder, defaultPinned),
+      sorting: Array.isArray(p.sorting) ? p.sorting : [],
     }
   } catch {
-    return { order: defaultOrder, visibility: {}, pinned: defaultPinned }
+    return { order: defaultOrder, visibility: {}, pinned: defaultPinned, sorting: [] }
   }
 }
 
-function saveSettings(key: string, order: string[], visibility: VisibilityState, pinned: string[]): void {
-  try { localStorage.setItem(key, JSON.stringify({ order, visibility, pinned })) } catch {}
+function saveSettings(key: string, order: string[], visibility: VisibilityState, pinned: string[], sorting: SortingState): void {
+  try { localStorage.setItem(key, JSON.stringify({ order, visibility, pinned, sorting })) } catch {}
 }
 
 /* ---------------------------------------------------------------------------
@@ -173,26 +200,28 @@ interface DataTableProps<T> {
   showDownload?: boolean
   downloadFilename?: string
   csvColumns?: { key: string; header: string; accessor: (row: T) => string }[]
+  /** Initial sort applied when the user has no persisted sort yet. */
+  defaultSorting?: SortingState
 }
 
 export function DataTable<T>({
   columns, data, storageKey, defaultPinned = [], columnLabels = {},
   filterPlaceholder = 'Filter...', onRowClick, title,
   showFilter = true, showColumnConfig = true, showDownload = true,
-  downloadFilename = 'export', csvColumns,
+  downloadFilename = 'export', csvColumns, defaultSorting = [],
 }: DataTableProps<T>) {
   const defaultOrder = useMemo(() => columns.map((c) => ('accessorKey' in c ? String(c.accessorKey) : c.id ?? '')).filter(Boolean), [columns])
 
-  const [persisted] = useState(() => storageKey ? loadSettings(storageKey, defaultOrder, defaultPinned) : { order: defaultOrder, visibility: {} as VisibilityState, pinned: defaultPinned })
-  const [sorting, setSorting] = useState<SortingState>([])
+  const [persisted] = useState(() => storageKey ? loadSettings(storageKey, defaultOrder, defaultPinned) : { order: defaultOrder, visibility: {} as VisibilityState, pinned: defaultPinned, sorting: [] as SortingState })
+  const [sorting, setSorting] = useState<SortingState>(persisted.sorting.length ? persisted.sorting : defaultSorting)
   const [globalFilter, setGlobalFilter] = useState('')
   const [columnOrder, setColumnOrder] = useState<ColumnOrderState>(persisted.order)
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(persisted.visibility)
   const [pinnedColumns, setPinnedColumns] = useState<string[]>(persisted.pinned)
 
   useEffect(() => {
-    if (storageKey) saveSettings(storageKey, columnOrder, columnVisibility, pinnedColumns)
-  }, [storageKey, columnOrder, columnVisibility, pinnedColumns])
+    if (storageKey) saveSettings(storageKey, columnOrder, columnVisibility, pinnedColumns, sorting)
+  }, [storageKey, columnOrder, columnVisibility, pinnedColumns, sorting])
 
   const table = useReactTable({
     data, columns,
@@ -221,7 +250,7 @@ export function DataTable<T>({
   }, [table, csvColumns, downloadFilename])
 
   const handleReset = () => {
-    setColumnOrder(defaultOrder); setColumnVisibility({}); setPinnedColumns(defaultPinned)
+    setColumnOrder(defaultOrder); setColumnVisibility({}); setPinnedColumns(defaultPinned); setSorting([])
   }
 
   return (
@@ -254,15 +283,20 @@ export function DataTable<T>({
         <table className="w-full text-sm">
           <thead>
             {table.getHeaderGroups().map(hg => (
-              <tr key={hg.id} className="border-b text-left text-xs text-muted-foreground">
+              <tr key={hg.id} className="border-b text-xs text-muted-foreground">
                 {hg.headers.map(h => {
                   const pinned = h.column.getIsPinned()
+                  const align = (h.column.columnDef.meta as Record<string, string> | undefined)?.align
                   return (
-                    <th key={h.id} className={cn('pb-2 pr-3 cursor-pointer select-none whitespace-nowrap', pinned && 'sticky bg-card z-20')}
+                    <th key={h.id} className={cn(
+                      'pb-2 pr-3 cursor-pointer select-none whitespace-nowrap',
+                      align === 'right' ? 'text-right' : 'text-left',
+                      pinned && 'sticky bg-card z-20',
+                    )}
                       style={pinned ? getPinStyle(h.column as never) : undefined}
                       onClick={h.column.getToggleSortingHandler()}>
                       {flexRender(h.column.columnDef.header, h.getContext())}
-                      {h.column.getIsSorted() === 'asc' ? ' ▲' : h.column.getIsSorted() === 'desc' ? ' ▼' : h.column.getCanSort() ? <span className="ml-1 text-muted-foreground/40">↕</span> : null}
+                      {h.column.getIsSorted() === 'asc' ? ' ▲' : h.column.getIsSorted() === 'desc' ? ' ▼' : null}
                     </th>
                   )
                 })}
@@ -276,8 +310,13 @@ export function DataTable<T>({
                 onClick={onRowClick ? () => onRowClick(row.original) : undefined}>
                 {row.getVisibleCells().map(cell => {
                   const pinned = cell.column.getIsPinned()
+                  const align = (cell.column.columnDef.meta as Record<string, string> | undefined)?.align
                   return (
-                    <td key={cell.id} className={cn('py-2 pr-3', pinned && 'sticky bg-card z-10')}
+                    <td key={cell.id} className={cn(
+                      'py-2 pr-3',
+                      align === 'right' && 'text-right',
+                      pinned && 'sticky bg-card z-10',
+                    )}
                       style={pinned ? getPinStyle(cell.column as never) : undefined}>
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </td>

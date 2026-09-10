@@ -44,6 +44,12 @@ checkpoints.json
 log/ws_proxy_stats.json
 
 
+# Market data — large and fully regenerable, never commit
+data/master_contract_archive/
+data/bhavcopy_eq/
+data/bhavcopy_fo/
+data/intraday_1m_cache/
+
 # Strategy encryption key
 db/strategy_encryption.key
 

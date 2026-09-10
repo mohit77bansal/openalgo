@@ -30,11 +30,50 @@ export interface Trade {
   exchange: string
   action: 'BUY' | 'SELL'
   quantity: number
+  lotsize?: number
   average_price: number
   trade_value: number
   product: string
   orderid: string
   timestamp: string
+}
+
+export interface RoundTrip {
+  symbol: string
+  exchange: string
+  product: string
+  direction: 'LONG' | 'SHORT'
+  qty: number
+  lot_size: number
+  lots: number | null
+  entry_price: number
+  exit_price: number
+  gross_pnl: number
+  fees: number
+  fees_source?: 'broker' | 'model'
+  net_pnl: number
+  net_pct: number
+  entry_time: string
+  exit_time: string
+}
+
+export interface TradebookAnalysis {
+  roundtrips: RoundTrip[]
+  totals: {
+    count: number
+    gross_pnl: number
+    fees: number
+    net_pnl: number
+    wins: number
+    win_rate: number
+  }
+  ledger: {
+    initial_capital: number
+    current_balance: number | null
+    net_pnl: number | null
+    net_pct: number | null
+    is_loss: boolean | null
+  }
 }
 
 export interface Holding {

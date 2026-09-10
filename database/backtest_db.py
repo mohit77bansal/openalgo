@@ -7,7 +7,7 @@ import os
 from datetime import datetime
 
 from sqlalchemy import Column, DateTime, Float, Integer, String, Text, create_engine
-from sqlalchemy.orm import declarative_base, scoped_session, sessionmaker
+from sqlalchemy.orm import declarative_base, defer, scoped_session, sessionmaker
 from sqlalchemy.pool import NullPool
 
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -109,8 +109,17 @@ def save_backtest_run(result: dict) -> int | None:
 def list_backtest_runs(limit: int = 50) -> list[dict]:
     """Return recent backtest runs, newest first."""
     try:
+        # Defer the large JSON blob columns — this listing never returns them,
+        # so there's no reason to pull equity/trades/ohlc/etc. for every row.
         runs = (
             db_session.query(BacktestRun)
+            .options(
+                defer(BacktestRun.equity_json),
+                defer(BacktestRun.trades_json),
+                defer(BacktestRun.ohlc_json),
+                defer(BacktestRun.per_instrument_json),
+                defer(BacktestRun.metrics_json),
+            )
             .order_by(BacktestRun.created_at.desc())
             .limit(limit)
             .all()
@@ -188,5 +197,28 @@ def get_backtest_run(run_id: int) -> dict | None:
             "ohlc": json.loads(r.ohlc_json) if getattr(r, 'ohlc_json', None) else [],
             "per_instrument": json.loads(r.per_instrument_json) if getattr(r, 'per_instrument_json', None) else [],
         }
+    finally:
+        db_session.remove()
+
+
+def get_backtest_equities(run_ids: list[int]) -> dict[int, list]:
+    """Fetch only the equity curve for many runs in a single query.
+
+    The strategy-overview page needs each run's equity curve to compute a
+    recent-P&L metric, but NOT its (potentially large) trades / ohlc /
+    per_instrument blobs. Selecting only ``id`` + ``equity_json`` for all
+    requested runs at once avoids an N+1 of full-row deserialisations
+    (which made the overview take ~16s across ~40 strategies).
+    """
+    ids = [rid for rid in run_ids if rid]
+    if not ids:
+        return {}
+    try:
+        rows = (
+            db_session.query(BacktestRun.id, BacktestRun.equity_json)
+            .filter(BacktestRun.id.in_(ids))
+            .all()
+        )
+        return {rid: (json.loads(eq) if eq else []) for rid, eq in rows}
     finally:
         db_session.remove()

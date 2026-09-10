@@ -229,6 +229,10 @@ def place_order_api(data, auth):
         orderid = response_data.get("data", {}).get("orderid")
     else:
         orderid = None
+        logger.error(
+            f"Angel placeOrder rejected for {data.get('symbol')}/{data.get('exchange')}: "
+            f"{response_data}"
+        )
     return response, response_data, orderid
 
 

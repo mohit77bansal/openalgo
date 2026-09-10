@@ -30,38 +30,26 @@ export function AuthSync({ children }: AuthSyncProps) {
         if (response.ok) {
           const data = await response.json()
 
-          if (data.status === 'success' && data.logged_in && data.broker) {
-            // Flask session is authenticated with broker - sync to Zustand
+          if (data.status === 'success' && (data.authenticated || data.logged_in)) {
+            // User is authenticated -- with or without broker
             setUser({
               username: data.user,
-              broker: data.broker,
+              broker: data.broker || null,
               isLoggedIn: true,
               loginTime: new Date().toISOString(),
             })
-            // Store the API key for trading API calls
             if (data.api_key) {
               setApiKey(data.api_key)
             }
-            // Fetch broker capabilities (exchanges, type, features)
-            await fetchCapabilities()
-            // Also sync app mode from backend
-            await syncAppMode()
-            // Sync active session count
+            if (data.broker) {
+              await fetchCapabilities()
+              await syncAppMode()
+            } else {
+              clearCapabilities()
+            }
             if (data.active_sessions !== undefined) {
               setActiveSessionCount(data.active_sessions)
             }
-          } else if (data.status === 'success' && data.authenticated && !data.logged_in) {
-            // User is authenticated but hasn't connected broker yet — still let them in
-            setUser({
-              username: data.user,
-              broker: null,
-              isLoggedIn: true,
-              loginTime: new Date().toISOString(),
-            })
-            if (data.api_key) {
-              setApiKey(data.api_key)
-            }
-            clearCapabilities()
           } else {
             // Not authenticated or status is not success - clear Zustand store
             logout()

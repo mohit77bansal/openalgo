@@ -305,12 +305,27 @@ def strategy_overview():
         if sname not in latest_by_strategy:
             latest_by_strategy[sname] = r
 
+    # Compute recent metrics (last 30 days P&L) for each run. Batch-fetch the
+    # equity curves (equity column only) for the latest run per strategy in a
+    # single query — loading full runs one-by-one here was an N+1 that made this
+    # endpoint take ~16s across ~40 strategies.
+    from database.backtest_db import get_backtest_equities
+    from services.backtest_service import _compute_recent_metrics
+
+    equities = get_backtest_equities(
+        [latest_by_strategy.get(c["name"], {}).get("id") for c in configs]
+    )
+
     result = []
     for c in configs:
         perf = latest_by_strategy.get(c["name"], {})
+        run_id = perf.get("id")
+        recent = {"recent_pnl": None, "recent_sharpe": None}
+        if run_id and run_id in equities:
+            recent = _compute_recent_metrics(equities[run_id], days=30)
         result.append({
             **c,
-            "run_id": perf.get("id"),
+            "run_id": run_id,
             "net_pnl": perf.get("net_pnl"),
             "fees_total": perf.get("fees_total"),
             "n_trades": perf.get("n_trades"),
@@ -322,7 +337,12 @@ def strategy_overview():
             "symbol": perf.get("symbol"),
             "interval": perf.get("interval"),
             "n_bars": perf.get("n_bars"),
-            "created_at": perf.get("created_at"),
+            # Prefer the strategy's own creation date; fall back to the latest
+            # backtest run's date for rows that predate the created_at column.
+            "created_at": c.get("created_at") or perf.get("created_at"),
+            "is_favorite": perf.get("is_favorite", False),
+            "recent_pnl": recent.get("recent_pnl"),
+            "recent_sharpe": recent.get("recent_sharpe"),
         })
 
     active = [r for r in result if r["is_active"]]

@@ -41,6 +41,13 @@ import {
 } from '@/components/ui/dialog'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Label } from '@/components/ui/label'
 import {
   Table,
@@ -137,6 +144,11 @@ export default function OrderBook() {
   const [isLoading, setIsLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Order annotations: orderid -> { tag_type, description }
+  const [tags, setTags] = useState<Record<string, { tag_type: string; description: string }>>({})
+  const [tagTypes, setTagTypes] = useState<string[]>([
+    'Test', 'Scalping', 'Indexing', 'Momentum', 'Hedge', 'Arbitrage', 'Investment', 'Other',
+  ])
 
   // Filter state
   const [statusFilter, setStatusFilter] = useState<string[]>([])
@@ -232,7 +244,10 @@ export default function OrderBook() {
       if (showRefresh) setIsRefreshing(true)
 
       try {
-        const response = await tradingApi.getOrders(apiKey)
+        const [response, tagsResp] = await Promise.all([
+          tradingApi.getOrders(apiKey),
+          tradingApi.getOrderTags(apiKey).catch(() => null),
+        ])
         if (response.status === 'success' && response.data) {
           setOrders(response.data.orders || [])
           setStats(response.data.statistics)
@@ -240,12 +255,33 @@ export default function OrderBook() {
         } else {
           setError(response.message || 'Failed to fetch orders')
         }
+        if (tagsResp?.status === 'success' && tagsResp.data) {
+          setTags(tagsResp.data)
+          if (Array.isArray(tagsResp.tag_types)) setTagTypes(tagsResp.tag_types)
+        }
       } catch {
         setError('Failed to fetch orders')
       } finally {
         setIsLoading(false)
         setIsRefreshing(false)
       }
+    },
+    [apiKey]
+  )
+
+  // User order annotations (Type tag + free-text description), keyed by orderid.
+  const saveTag = useCallback(
+    async (orderid: string, patch: { tag_type?: string; description?: string }) => {
+      if (!apiKey) return
+      setTags((prev) => {
+        const cur = prev[orderid] || { tag_type: '', description: '' }
+        const next = { ...cur, ...patch }
+        // Fire-and-forget persist; revert handled by next fetch on failure.
+        tradingApi
+          .setOrderTag(apiKey, orderid, next.tag_type, next.description)
+          .catch(() => showToast.error('Failed to save order tag', 'orders'))
+        return { ...prev, [orderid]: next }
+      })
     },
     [apiKey]
   )
@@ -704,6 +740,8 @@ export default function OrderBook() {
                               ))}
                           </div>
                         </TableHead>
+                        <TableHead className="w-[130px]">Tag</TableHead>
+                        <TableHead className="w-[180px]">Description</TableHead>
                         <TableHead className="w-[60px]">Cancel</TableHead>
                         <TableHead className="w-[60px]">Modify</TableHead>
                       </TableRow>
@@ -752,6 +790,41 @@ export default function OrderBook() {
                             </TableCell>
                             <TableCell className="text-sm text-muted-foreground">
                               {formatTime(order.timestamp)}
+                            </TableCell>
+                            <TableCell>
+                              <Select
+                                value={tags[order.orderid]?.tag_type || ''}
+                                onValueChange={(v) => saveTag(order.orderid, { tag_type: v })}
+                              >
+                                <SelectTrigger className="h-8 text-xs">
+                                  <SelectValue placeholder="Tag" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {tagTypes.map((t) => (
+                                    <SelectItem key={t} value={t} className="text-xs">
+                                      {t}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </TableCell>
+                            <TableCell>
+                              <Input
+                                value={tags[order.orderid]?.description || ''}
+                                placeholder="Add note…"
+                                className="h-8 text-xs"
+                                onChange={(e) => {
+                                  const description = e.target.value
+                                  setTags((prev) => ({
+                                    ...prev,
+                                    [order.orderid]: {
+                                      tag_type: prev[order.orderid]?.tag_type || '',
+                                      description,
+                                    },
+                                  }))
+                                }}
+                                onBlur={(e) => saveTag(order.orderid, { description: e.target.value })}
+                              />
                             </TableCell>
                             <TableCell>
                               {canCancel && (

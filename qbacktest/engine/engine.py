@@ -174,6 +174,8 @@ class BacktestEngine:
             self._started = True
 
         for ev in self.data.stream():
+            if self.total_equity <= 0:
+                break
             if isinstance(ev, Bar):
                 self._on_bar(ev, ctx)
             elif isinstance(ev, Tick):

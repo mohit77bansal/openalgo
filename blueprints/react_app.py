@@ -235,6 +235,11 @@ def react_backtest_results():
     return serve_react_app()
 
 
+@react_bp.route("/backtest/results/<int:run_id>")
+def react_backtest_results_detail(run_id):
+    return serve_react_app()
+
+
 # The former path. Kept so an existing bookmark reaches the SPA, which
 # redirects it to the new one rather than showing a not-found.
 @react_bp.route("/portfolio")
